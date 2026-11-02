@@ -23,8 +23,35 @@ body {
 }
 
 .toolbar .hint {
+  margin-left: auto;  /* バーの右端に寄せる */
   font-size: 13px;
   color: #666;
+}
+
+/* 図形を追加するボタン */
+.shape-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.shape-buttons button {
+  width: 36px;
+  height: 36px;
+  padding: 4px;
+  border: 1px solid #d0d4da;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.shape-buttons button:hover {
+  background: #eef3ff;
+  border-color: #7a9cff;
+}
+
+.shape-buttons img {
+  width: 100%;
+  height: 100%;
 }
 
 /* 画面全体の高さに収めて、スクロールバーが出ないようにする */

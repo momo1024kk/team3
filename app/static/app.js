@@ -2,8 +2,12 @@
 // team3 スナップ：画面の処理
 // ==============================
 
-// 置く図形の画像（images/ フォルダの中のファイル）
+// 置く図形の画像（images/ フォルダの中のファイル）と、ボタンに出す日本語の名前
 const SHAPES = ["star", "square", "circle", "triangle", "cloud", "speech_bubble"];
+const SHAPE_NAMES = {
+  star: "星", square: "四角形", circle: "円",
+  triangle: "三角形", cloud: "雲", speech_bubble: "吹き出し",
+};
 
 // 画面に表示するときの図形の大きさ（元の画像は 400×400）
 const SHAPE_SIZE = 200;
@@ -171,6 +175,30 @@ async function addShape(name, x, y) {
   group.on("transform", () => keepMarkerSize(group));
 
   layer.add(group);
+  return group;
+}
+
+// ==============================
+// 図形を追加するボタン
+// ==============================
+
+// 続けて追加したときに、ぴったり重ならないように少しずつずらす
+let addCount = 0;
+
+const buttonBox = document.getElementById("shape-buttons");
+for (const name of SHAPES) {
+  const button = document.createElement("button");
+  button.title = SHAPE_NAMES[name] + "を追加";  // マウスを乗せると出る説明
+  button.innerHTML = `<img src="/images/${name}.png" alt="${SHAPE_NAMES[name]}">`;
+  button.addEventListener("click", async () => {
+    // スライドの真ん中に置く（ずらしは 20px ずつ、5回で元に戻る）
+    const shift = (addCount++ % 5) * 20;
+    const x = slide.x() + slide.width() / 2 - SHAPE_SIZE / 2 + shift;
+    const y = slide.y() + slide.height() / 2 - SHAPE_SIZE / 2 + shift;
+    const group = await addShape(name, x, y);
+    select(group);  // 追加した図形を選んだ状態にする
+  });
+  buttonBox.appendChild(button);
 }
 
 // ==============================

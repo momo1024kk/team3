@@ -10,7 +10,9 @@
   <!-- 上のバー：アプリの名前と説明 -->
   <header class="toolbar">
     <h1>team3 スナップ</h1>
-    <span class="hint">図形をドラッグして動かせます</span>
+    <!-- 図形を追加するボタン。中身は app.js が作る -->
+    <div id="shape-buttons" class="shape-buttons"></div>
+    <span class="hint">ドラッグで移動・四隅で拡大縮小・Delete キーで削除</span>
   </header>
 
   <!-- キャンバス（図形を置く作業スペース）。Konva がこの中に描画する -->
