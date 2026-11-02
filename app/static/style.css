@@ -42,12 +42,10 @@ body {
   flex-shrink: 0;
 }
 
-/* キャンバス（スライドのような白い作業スペース）。上のバーを除いた残りを全部使う */
+/* キャンバス（作業スペース）。上のバーを除いた残りを全部使う。
+   白いスライドは app.js がこの上に描く */
 #stage {
   flex: 1;
   min-height: 0;
-  margin: 16px;
-  background: #ffffff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
   overflow: hidden;
 }

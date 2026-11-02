@@ -32,15 +32,43 @@ const stage = new Konva.Stage({
   width: container.clientWidth,
   height: container.clientHeight,
 });
+const slideLayer = new Konva.Layer({ listening: false });  // スライドを描く「層」（一番奥）
+stage.add(slideLayer);
 const layer = new Konva.Layer();  // 図形を置く「層」
 stage.add(layer);
 const guideLayer = new Konva.Layer({ listening: false });  // ガイド線を描く「層」（図形より手前）
 stage.add(guideLayer);
 
-// ウィンドウの大きさが変わったら、キャンバスも白い枠に合わせて大きさを変える
+// ---- スライド（16:9 の白い四角）----
+// 作業スペースの真ん中に、はみ出さない一番大きいサイズで置く
+const slide = new Konva.Rect({
+  fill: "#ffffff",
+  shadowColor: "black", shadowOpacity: 0.15, shadowBlur: 8, shadowOffsetY: 2,
+});
+slideLayer.add(slide);
+
+function layoutSlide() {
+  const pad = 32;  // スライドのまわりの余白
+  const w = Math.min(stage.width() - pad * 2, ((stage.height() - pad * 2) * 16) / 9);
+  const h = (w * 9) / 16;
+  slide.setAttrs({ x: (stage.width() - w) / 2, y: (stage.height() - h) / 2, width: w, height: h });
+}
+layoutSlide();
+
+// スライドの「端」と「中央」の線。図形の特徴点はここにも吸い付く
+function slideLines() {
+  const { x, y, width, height } = slide.attrs;
+  return {
+    x: [x, x + width / 2, x + width],    // 左端・中央・右端（縦の線）
+    y: [y, y + height / 2, y + height],  // 上端・中央・下端（横の線）
+  };
+}
+
+// ウィンドウの大きさが変わったら、キャンバスとスライドも合わせて大きさを変える
 window.addEventListener("resize", () => {
   stage.width(container.clientWidth);
   stage.height(container.clientHeight);
+  layoutSlide();
 });
 
 // ---- 特徴点を取ってくる ----
@@ -205,19 +233,26 @@ function canvasPoints(group) {
   return list;
 }
 
-// 動かしている図形の点と、他の図形の点の組み合わせの中から、
-// axis（"x" か "y"）の位置の差が一番小さいものを探す。SNAP_DISTANCE より遠ければ null
-function findClosest(movingPoints, otherPoints, axis) {
+// 動かしている図形の位置（values）と、吸い付く先の位置（targets）の組み合わせの中から、
+// 差が一番小さいものを探す。SNAP_DISTANCE より遠ければ null
+function findClosest(values, targets) {
   let best = null;
-  for (const m of movingPoints) {
-    for (const o of otherPoints) {
-      const diff = o[axis] - m[axis];
+  for (const v of values) {
+    for (const t of targets) {
+      const diff = t - v;
       if (Math.abs(diff) <= SNAP_DISTANCE && (best === null || Math.abs(diff) < Math.abs(best))) {
         best = diff;
       }
     }
   }
   return best;
+}
+
+// スライドの端・中央の線に揃ったときのガイド線。スライドの端から端まで引く
+function drawSlideGuide(value, axis) {
+  const { x, y, width, height } = slide.attrs;
+  const points = axis === "x" ? [value, y, value, y + height] : [x, value, x + width, value];
+  guideLayer.add(new Konva.Line({ points: points, stroke: GUIDE_COLOR, strokeWidth: 1 }));
 }
 
 // ガイド線を1本描く。2つの点を結ぶ線を、少しはみ出す長さで描き、両端の点に輪を付ける
@@ -240,25 +275,36 @@ function snap(moving) {
   const others = layer.getChildren((node) => node !== moving && node.getAttr("points"));
   const otherPoints = others.flatMap(canvasPoints);
 
+  // 吸い付く先：他の図形の点と、スライドの端・中央の線
+  const lines = slideLines();
+  const targetsX = otherPoints.map((p) => p.x).concat(lines.x);
+  const targetsY = otherPoints.map((p) => p.y).concat(lines.y);
+
   // 1. 横方向（x）と縦方向（y）それぞれで、一番近いずれを探して、その分だけ動かす（吸い付き）
-  const dx = findClosest(canvasPoints(moving), otherPoints, "x");
-  const dy = findClosest(canvasPoints(moving), otherPoints, "y");
+  const before = canvasPoints(moving);
+  const dx = findClosest(before.map((p) => p.x), targetsX);
+  const dy = findClosest(before.map((p) => p.y), targetsY);
   if (dx !== null) moving.x(moving.x() + dx);
   if (dy !== null) moving.y(moving.y() + dy);
 
-  // 2. 吸い付いた後の位置で、ぴったり揃っている点の組み合わせ全部にガイド線を描く
+  // 2. 吸い付いた後の位置で、ぴったり揃っているもの全部にガイド線を描く
   const movingPoints = canvasPoints(moving);
+  const near = (a, b) => Math.abs(a - b) < 0.5;
   for (const m of movingPoints) {
+    // 他の図形の点と揃っている
     for (const o of otherPoints) {
-      if (dx !== null && Math.abs(o.x - m.x) < 0.5) drawGuide(m, o, "x");
-      if (dy !== null && Math.abs(o.y - m.y) < 0.5) drawGuide(m, o, "y");
+      if (dx !== null && near(o.x, m.x)) drawGuide(m, o, "x");
+      if (dy !== null && near(o.y, m.y)) drawGuide(m, o, "y");
     }
+    // スライドの端・中央と揃っている
+    for (const lx of lines.x) if (dx !== null && near(lx, m.x)) drawSlideGuide(lx, "x");
+    for (const ly of lines.y) if (dy !== null && near(ly, m.y)) drawSlideGuide(ly, "y");
   }
 }
 
-// ---- 最初の配置：6つの図形を横に3つずつ並べる ----
+// ---- 最初の配置：6つの図形を、スライドの中に横に3つずつ並べる ----
 SHAPES.forEach((name, i) => {
   const col = i % 3;
   const row = Math.floor(i / 3);
-  addShape(name, 40 + col * (SHAPE_SIZE + 40), 20 + row * (SHAPE_SIZE + 20));
+  addShape(name, slide.x() + 40 + col * (SHAPE_SIZE + 40), slide.y() + 20 + row * (SHAPE_SIZE + 20));
 });
