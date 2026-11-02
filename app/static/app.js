@@ -8,6 +8,12 @@ const SHAPES = ["star", "square", "circle", "triangle", "cloud", "speech_bubble"
 // 画面に表示するときの図形の大きさ（元の画像は 400×400）
 const SHAPE_SIZE = 200;
 
+// スナップする距離（ピクセル）。特徴点どうしの縦か横の位置がこれ以内なら吸い付く
+const SNAP_DISTANCE = 6;
+
+// ガイド線の色
+const GUIDE_COLOR = "#ff3b7f";
+
 // 特徴点のラベルごとの色と表示文字（main.py の STYLES と同じ色）
 const STYLES = {
   top:       { color: "#ff0000", text: "T" },
@@ -28,6 +34,8 @@ const stage = new Konva.Stage({
 });
 const layer = new Konva.Layer();  // 図形を置く「層」
 stage.add(layer);
+const guideLayer = new Konva.Layer({ listening: false });  // ガイド線を描く「層」（図形より手前）
+stage.add(guideLayer);
 
 // ウィンドウの大きさが変わったら、キャンバスも白い枠に合わせて大きさを変える
 window.addEventListener("resize", () => {
@@ -120,7 +128,80 @@ async function addShape(name, x, y) {
   group.on("mouseenter", () => (stage.container().style.cursor = "grab"));
   group.on("mouseleave", () => (stage.container().style.cursor = "default"));
 
+  // ドラッグ中のスナップ
+  group.on("dragstart", () => group.moveToTop());  // つかんだ図形を一番手前にする
+  group.on("dragmove", () => snap(group));
+  group.on("dragend", () => guideLayer.destroyChildren());  // 離したらガイド線を消す
+
   layer.add(group);
+}
+
+// ==============================
+// スナップ
+// ==============================
+
+// 図形の特徴点を、キャンバス全体での座標（画面上の位置）にして返す
+function canvasPoints(group) {
+  const result = group.getAttr("points");
+  const scale = SHAPE_SIZE / result.width;
+  const list = [];
+  for (const points of Object.values(result.points)) {
+    for (const [x, y] of points) {
+      list.push({ x: group.x() + x * scale, y: group.y() + y * scale });
+    }
+  }
+  return list;
+}
+
+// 動かしている図形の点と、他の図形の点の組み合わせの中から、
+// axis（"x" か "y"）の位置の差が一番小さいものを探す。SNAP_DISTANCE より遠ければ null
+function findClosest(movingPoints, otherPoints, axis) {
+  let best = null;
+  for (const m of movingPoints) {
+    for (const o of otherPoints) {
+      const diff = o[axis] - m[axis];
+      if (Math.abs(diff) <= SNAP_DISTANCE && (best === null || Math.abs(diff) < Math.abs(best))) {
+        best = diff;
+      }
+    }
+  }
+  return best;
+}
+
+// ガイド線を1本描く。2つの点を結ぶ線を、少しはみ出す長さで描き、両端の点に輪を付ける
+function drawGuide(a, b, axis) {
+  const margin = 20;
+  const points = axis === "x"
+    ? [a.x, Math.min(a.y, b.y) - margin, a.x, Math.max(a.y, b.y) + margin]  // 縦の線
+    : [Math.min(a.x, b.x) - margin, a.y, Math.max(a.x, b.x) + margin, a.y]; // 横の線
+  guideLayer.add(new Konva.Line({ points: points, stroke: GUIDE_COLOR, strokeWidth: 1, dash: [4, 4] }));
+  for (const p of [a, b]) {
+    guideLayer.add(new Konva.Circle({ x: p.x, y: p.y, radius: 7, stroke: GUIDE_COLOR, strokeWidth: 2 }));
+  }
+}
+
+// ドラッグ中に毎回呼ばれる：近い点があれば吸い付かせて、ガイド線を描く
+function snap(moving) {
+  guideLayer.destroyChildren();  // 前回のガイド線を消す
+
+  // 他の図形の点を全部集める
+  const others = layer.getChildren((node) => node !== moving && node.getAttr("points"));
+  const otherPoints = others.flatMap(canvasPoints);
+
+  // 1. 横方向（x）と縦方向（y）それぞれで、一番近いずれを探して、その分だけ動かす（吸い付き）
+  const dx = findClosest(canvasPoints(moving), otherPoints, "x");
+  const dy = findClosest(canvasPoints(moving), otherPoints, "y");
+  if (dx !== null) moving.x(moving.x() + dx);
+  if (dy !== null) moving.y(moving.y() + dy);
+
+  // 2. 吸い付いた後の位置で、ぴったり揃っている点の組み合わせ全部にガイド線を描く
+  const movingPoints = canvasPoints(moving);
+  for (const m of movingPoints) {
+    for (const o of otherPoints) {
+      if (dx !== null && Math.abs(o.x - m.x) < 0.5) drawGuide(m, o, "x");
+      if (dy !== null && Math.abs(o.y - m.y) < 0.5) drawGuide(m, o, "y");
+    }
+  }
 }
 
 // ---- 最初の配置：6つの図形を横に3つずつ並べる ----
