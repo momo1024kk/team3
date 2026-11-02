@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>team3 スナップ</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 上のバー：アプリの名前と説明 -->
+  <header class="toolbar">
+    <h1>team3 スナップ</h1>
+    <span class="hint">図形をドラッグして動かせます</span>
+  </header>
+
+  <!-- キャンバス（図形を置く作業スペース）。Konva がこの中に描画する -->
+  <div id="stage"></div>
+
+  <!-- Konva.js：キャンバス上で図形を置いたりドラッグしたりするための道具 -->
+  <script src="https://unpkg.com/konva@9.3.6/konva.min.js"></script>
+  <!-- このアプリの処理 -->
+  <script src="app.js"></script>
+</body>
+</html>
