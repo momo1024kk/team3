@@ -1,31 +1,77 @@
-# team3 — 図形の特徴点検出
+# team3 — 図形の特徴点スナップ
 
-画像認識の授業の班課題です。画像の図形から、次の3種類の特徴点を検出します。
-対象は簡単な図形（円・四角・三角）から、星・吹き出し・雲のような複雑な図形までです。
+画像認識の授業の班課題です。画像の図形から特徴点（上下左右・頂点・くぼみ）を見つけて、
+**図形を動かすと特徴点どうしがピタッと揃う「スナップ機能」** を持つ、プレゼン資料づくり・描画ツールのようなアプリを作ります。
 
-| 特徴点 | ファイル | 担当 |
+PowerPoint は図形の外枠（四角い枠）で揃えますが、このアプリは**画像から見つけた特徴点**で揃えます。
+たとえば星なら、とがった先端そのものをスライドの端や他の図形の角に合わせられます。
+
+## 進め方
+
+| 段階 | 内容 | 時期 |
 | --- | --- | --- |
-| 上下左右 | `features/extremes.py` | @momo1024kk |
-| 頂点・辺 | `features/edges_vertices.py` | @koma-0704 |
-| くぼみ | `features/concavity.py` | @y240197 |
+| 1. MVP | 簡単な図形の画像で、**古典的な画像処理（OpenCV）** による特徴点検出とスナップを動かす | 中間発表（11/16）まで |
+| 2. 発展 | **deep learning** と組み合わせて、写真やイラストなど複雑な画像にも対応する | 最終発表（12/28）まで |
+
+## 特徴点と担当
+
+| 特徴点 | ファイル | ラベル | 担当 |
+| --- | --- | --- | --- |
+| 上下左右 | `features/extremes.py` | `top`, `bottom`, `left`, `right` | @momo1024kk |
+| 頂点・辺 | `features/edges_vertices.py` | `vertex` | @koma-0704 |
+| くぼみ | `features/concavity.py` | `concavity` | @y240197 |
+
+## アプリ
+
+### できること
+
+- 16:9 のスライドに図形を置いて、ドラッグで動かす
+- 他の図形の特徴点や、スライドの端・中央に近づくと、ガイド線が出て吸い付く
+- クリックで選択、四隅のつまみで拡大縮小、Delete キーで削除
+- 上のバーのボタンから図形を追加
+- 特徴点の印の表示 ON/OFF（隠してもスナップは効く）
+
+### 起動のしかた
+
+今は API がまだないので、仮のデータ（`app/static/mock_points.json`）で動きます。
+
+```bash
+# team3 フォルダで実行
+python -m http.server 8000
+```
+
+ブラウザで http://localhost:8000/app/static/index.html を開きます。止めるときは Ctrl + C です。
+
+API（`app/server.py`）ができたら、次のコマンドで起動する形に変わる予定です。
+
+```bash
+uvicorn app.server:app --reload
+```
 
 ## フォルダ構成
 
 ```
 team3/
-├── main.py              # 実行用：全員の検出結果を1枚の画像に重ねて output/ に保存
+├── main.py              # 検出結果を確認する：全員の結果を1枚の画像に重ねて output/ に保存
 ├── make_samples.py      # テスト画像を images/ に作る
 ├── requirements.txt     # 必要なライブラリ
 ├── images/              # テスト画像（全員で共有）
 ├── output/              # 実行結果（各自で生成。Git には上げない）
-└── features/
-    ├── preprocess.py      # 共通：読み込み → 二値化 → 輪郭抽出
-    ├── extremes.py        # 上下左右
-    ├── edges_vertices.py  # 頂点・辺
-    └── concavity.py       # くぼみ
+├── features/            # 特徴点の検出（Python）
+│   ├── preprocess.py      # 共通：読み込み → 二値化 → 輪郭抽出
+│   ├── extremes.py        # 上下左右
+│   ├── edges_vertices.py  # 頂点・辺
+│   └── concavity.py       # くぼみ
+└── app/                 # アプリ
+    ├── server.py          # API：画像を受け取って特徴点を返す（作成中）
+    └── static/            # 画面（ブラウザで動く部分）
+        ├── index.html
+        ├── style.css
+        ├── app.js           # ドラッグ・スナップなどの動き
+        └── mock_points.json # API ができるまでの仮のデータ
 ```
 
-## 環境構築と実行
+## 環境構築と検出結果の確認
 
 ```bash
 # 1. 仮想環境を作る（最初の1回だけ）
@@ -36,7 +82,7 @@ python -m venv .venv
 # 2. ライブラリを入れる
 pip install -r requirements.txt
 
-# 3. 実行
+# 3. 検出結果を画像で確認する
 python main.py              # images/ の全画像
 python main.py star.png     # 1枚だけ
 ```
@@ -47,7 +93,7 @@ python main.py star.png     # 1枚だけ
 
 ### 検出関数の形をそろえる
 
-`main.py` から全員の結果をまとめて呼ぶため、各ファイルには同じ形の関数 `detect` を作ります。
+`main.py` や API から全員の結果をまとめて呼ぶため、各ファイルには同じ形の関数 `detect` を作ります。
 
 ```python
 def detect(contour):
@@ -56,13 +102,38 @@ def detect(contour):
 ```
 
 - 座標は `int` の `(x, y)` にする（左上が原点、y は下向きが正）
-- ラベル名は次のとおり。新しく追加するときは `main.py` の `STYLES` に色も追加する
+- ラベル名は「特徴点と担当」の表のとおり。新しく追加するときは、`main.py` の `STYLES` と `app/static/app.js` の `STYLES` に色も追加する
 
-| ファイル | ラベル |
-| --- | --- |
-| extremes.py | `top`, `bottom`, `left`, `right` |
-| edges_vertices.py | `vertex` |
-| concavity.py | `concavity` |
+### 点の選び方（班で決めたこと）
+
+スナップで吸い付く先として役に立つかどうかで決めています。
+
+- 同じ高さ（または同じ横位置）で**離れた場所にある点は全部返す**（例：星の下の2つの先端）
+- 四角形の上辺のような**平らな辺は、真ん中の1点**を返す
+- 別々の検出で**同じ場所に重なった点は1つにまとめる**（例：星のてっぺんの T と V）
+- 円や雲の曲線の途中には頂点を出さない（とがった角だけを頂点にする）
+
+### 画面と API の間のデータの形（JSON）
+
+画面は図形の画像を API に送り、API は次の形で特徴点を返します。
+
+```json
+{
+  "width": 400,
+  "height": 400,
+  "points": {
+    "top": [[200, 50]],
+    "bottom": [[111, 321], [288, 321]],
+    "left": [[57, 153]],
+    "right": [[342, 153]],
+    "vertex": [[200, 50], [342, 153]],
+    "concavity": [[236, 151]]
+  }
+}
+```
+
+- `width`, `height` は元の画像の大きさ。座標は元の画像の上での位置
+- 1枚の画像に図形は1つの前提（中間発表まで）
 
 ### 共通部分
 
@@ -74,12 +145,12 @@ def detect(contour):
 1. **`main` に直接 push しない**
 2. 作業前に最新の `main` を取り込む
    ```bash
-   git checkout main
+   git switch main
    git pull
    ```
-3. 自分用のブランチを作って作業する（名前は `feature/内容`）
+3. 自分用のブランチを作って作業する（名前は `feature/内容`・`fix/内容`・`docs/内容`）
    ```bash
-   git checkout -b feature/extremes
+   git switch -c feature/extremes
    ```
 4. こまめにコミットして push する
    ```bash
@@ -91,4 +162,5 @@ def detect(contour):
 
 ## メモ・検討中のこと
 
-- 一番下などの点が同じ高さに2つ以上並ぶ場合（星の下の2つの先端など）、今は片方だけを返している。両方返すかどうか班で決める
+- 図形の回転（回転してもスナップが効くようにする）
+- deep learning との組み合わせ方（写真から図形を切り出すところから始める案）
