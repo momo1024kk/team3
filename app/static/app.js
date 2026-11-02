@@ -91,7 +91,7 @@ function makeWhiteTransparent(img) {
 // ---- 特徴点の印を作る ----
 // result: fetchPoints() の戻り値。座標は元の画像の大きさなので、表示の大きさに合わせて縮める
 function makeMarkers(result) {
-  const markers = new Konva.Group({ listening: false });  // 印はクリックの対象にしない
+  const markers = new Konva.Group({ listening: false, name: "markers" });  // 印はクリックの対象にしない
   const scale = SHAPE_SIZE / result.width;
 
   for (const [label, points] of Object.entries(result.points)) {
@@ -129,11 +129,61 @@ async function addShape(name, x, y) {
   group.on("mouseleave", () => (stage.container().style.cursor = "default"));
 
   // ドラッグ中のスナップ
-  group.on("dragstart", () => group.moveToTop());  // つかんだ図形を一番手前にする
+  group.on("dragstart", () => {
+    group.moveToTop();        // つかんだ図形を一番手前にする
+    transformer.moveToTop();  // 選択の枠は、さらにその手前
+  });
   group.on("dragmove", () => snap(group));
   group.on("dragend", () => guideLayer.destroyChildren());  // 離したらガイド線を消す
 
+  // クリック（またはドラッグ開始）で選択する
+  group.on("mousedown touchstart", () => select(group));
+
+  // 大きさを変えている間、印の大きさは変わらないようにする
+  group.on("transform", () => keepMarkerSize(group));
+
   layer.add(group);
+}
+
+// ==============================
+// 選択・大きさの変更・削除
+// ==============================
+
+// 選択した図形のまわりに出る枠。四隅のつまみで大きさを変えられる
+const transformer = new Konva.Transformer({
+  rotateEnabled: false,  // 回転は、スナップの対応が終わってから
+  keepRatio: true,       // 縦横の比率を保つ
+  enabledAnchors: ["top-left", "top-right", "bottom-left", "bottom-right"],
+  // 小さくしすぎないようにする（40px 未満にはしない）
+  boundBoxFunc: (oldBox, newBox) => (newBox.width < 40 || newBox.height < 40 ? oldBox : newBox),
+});
+layer.add(transformer);
+
+function select(group) {
+  transformer.nodes([group]);
+  transformer.moveToTop();
+}
+
+// 何もないところをクリックしたら、選択を外す
+stage.on("mousedown touchstart", (e) => {
+  if (e.target === stage) transformer.nodes([]);
+});
+
+// Delete キー（または Backspace キー）で、選択中の図形を消す
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Delete" && e.key !== "Backspace") return;
+  for (const node of transformer.nodes()) node.destroy();
+  transformer.nodes([]);
+});
+
+// 図形を拡大・縮小すると、中の印や文字まで一緒に大きくなってしまう。
+// 印1つ1つを逆向きに縮めて、見た目の大きさを保つ
+function keepMarkerSize(group) {
+  const markers = group.findOne(".markers");
+  for (const mark of markers.getChildren()) {
+    mark.scaleX(1 / group.scaleX());
+    mark.scaleY(1 / group.scaleY());
+  }
 }
 
 // ==============================
@@ -141,13 +191,15 @@ async function addShape(name, x, y) {
 // ==============================
 
 // 図形の特徴点を、キャンバス全体での座標（画面上の位置）にして返す
+// getTransform() は「図形の位置と拡大率」をまとめたもの。これで大きさを変えた図形にも対応できる
 function canvasPoints(group) {
   const result = group.getAttr("points");
   const scale = SHAPE_SIZE / result.width;
+  const transform = group.getTransform();
   const list = [];
   for (const points of Object.values(result.points)) {
     for (const [x, y] of points) {
-      list.push({ x: group.x() + x * scale, y: group.y() + y * scale });
+      list.push(transform.point({ x: x * scale, y: y * scale }));
     }
   }
   return list;
