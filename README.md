@@ -33,20 +33,18 @@ PowerPoint は図形の外枠（四角い枠）で揃えますが、このアプ
 
 ### 起動のしかた
 
-今は API がまだないので、仮のデータ（`app/static/mock_points.json`）で動きます。
-
-```bash
-# team3 フォルダで実行
-python -m http.server 8000
-```
-
-ブラウザで http://localhost:8000/app/static/index.html を開きます。止めるときは Ctrl + C です。
-
-API（`app/server.py`）ができたら、次のコマンドで起動する形に変わる予定です。
+画面と API を1つのコマンドで起動します（仮想環境を有効にしてから、team3 フォルダで実行）。
 
 ```bash
 uvicorn app.server:app --reload
 ```
+
+- アプリ：http://localhost:8000/
+- API を単体で試す画面：http://localhost:8000/docs
+- 止めるとき：Ctrl + C
+
+図形を置くと、画面がその画像を API に送り、画像処理で見つけた特徴点を受け取って表示します。
+API の詳しい使い方は [docs/api.md](docs/api.md) を見てください。
 
 ## フォルダ構成
 
@@ -55,6 +53,7 @@ team3/
 ├── main.py              # 検出結果を確認する：全員の結果を1枚の画像に重ねて output/ に保存
 ├── make_samples.py      # テスト画像を images/ に作る
 ├── requirements.txt     # 必要なライブラリ
+├── requirements-dev.txt # 自動テストに必要なライブラリ
 ├── images/              # テスト画像（全員で共有）
 ├── output/              # 実行結果（各自で生成。Git には上げない）
 ├── features/            # 特徴点の検出（Python）
@@ -62,13 +61,16 @@ team3/
 │   ├── extremes.py        # 上下左右
 │   ├── edges_vertices.py  # 頂点・辺
 │   └── concavity.py       # くぼみ
-└── app/                 # アプリ
-    ├── server.py          # API：画像を受け取って特徴点を返す（作成中）
-    └── static/            # 画面（ブラウザで動く部分）
-        ├── index.html
-        ├── style.css
-        ├── app.js           # ドラッグ・スナップなどの動き
-        └── mock_points.json # API ができるまでの仮のデータ
+├── app/                 # アプリ
+│   ├── server.py          # API：画像を受け取って特徴点を返す
+│   └── static/            # 画面（ブラウザで動く部分）
+│       ├── index.html
+│       ├── style.css
+│       └── app.js           # ドラッグ・スナップなどの動き
+├── tests/
+│   └── test_api.py        # API の自動テスト
+└── docs/
+    └── api.md             # API の使い方
 ```
 
 ## 環境構築と検出結果の確認

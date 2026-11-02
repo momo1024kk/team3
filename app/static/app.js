@@ -79,16 +79,29 @@ window.addEventListener("resize", () => {
 });
 
 // ---- 特徴点を取ってくる ----
-// 今は仮のデータ（mock_points.json）から読む。
-// API ができたら、この関数の中身だけを「画像を API に送って結果を受け取る」処理に差し替える。
+// 図形の画像を API（POST /api/detect）に送って、画像処理で見つけた特徴点を受け取る。
 // 戻り値は班で決めた形：{ width, height, points: { top: [[x, y], ...], ... } }
-let mockData = null;
+// 同じ図形を何回追加しても結果は同じなので、1回目の結果を覚えておいて使い回す
+const pointsCache = {};
+
 async function fetchPoints(name) {
-  if (mockData === null) {
-    const res = await fetch("mock_points.json");
-    mockData = await res.json();
+  if (pointsCache[name]) return pointsCache[name];
+
+  // 1. 図形の画像ファイルを読み込む
+  const imageResponse = await fetch("/images/" + name + ".png");
+  if (!imageResponse.ok) throw new Error("図形の画像を読み込めません：" + name);
+
+  // 2. 画像を API に送る（フォームでファイルを送るのと同じ形）
+  const form = new FormData();
+  form.append("file", await imageResponse.blob(), name + ".png");
+  const response = await fetch("/api/detect", { method: "POST", body: form });
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(typeof result.detail === "string" ? result.detail : "特徴点の検出に失敗しました");
   }
-  return mockData[name];
+
+  pointsCache[name] = result;
+  return result;
 }
 
 // ---- 画像を読み込む ----
@@ -148,11 +161,26 @@ function makeMarkers(result) {
   return markers;
 }
 
+// エラーのお知らせを出している最中かどうか
+let errorShown = false;
+
 // ---- 図形を1つキャンバスに置く ----
 // 画像と特徴点の印を1つのグループにまとめるので、ドラッグすると一緒に動く
 async function addShape(name, x, y) {
-  const img = await loadImage("/images/" + name + ".png");
-  const result = await fetchPoints(name);
+  let img, result;
+  try {
+    img = await loadImage("/images/" + name + ".png");
+    result = await fetchPoints(name);
+  } catch (error) {
+    // API が起動していないときなどは、図形を置かずに理由を知らせる（同時に失敗しても知らせるのは1回だけ）
+    if (!errorShown) {
+      errorShown = true;
+      alert("図形を追加できませんでした。\n" + error.message +
+            "\n\nuvicorn app.server:app --reload で起動しているか確認してください。");
+      setTimeout(() => (errorShown = false), 1000);
+    }
+    throw error;
+  }
 
   const group = new Konva.Group({ x: x, y: y, draggable: true, name: name });
   group.add(new Konva.Image({
