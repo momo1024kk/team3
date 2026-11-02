@@ -54,6 +54,16 @@ body {
   height: 100%;
 }
 
+/* 特徴点の表示 ON/OFF */
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
 /* 画面全体の高さに収めて、スクロールバーが出ないようにする */
 html, body {
   height: 100%;

@@ -28,6 +28,9 @@ const STYLES = {
   concavity: { color: "#00e5e5", text: "C" },
 };
 
+// 「特徴点を表示」のチェックボックス
+const showMarkers = document.getElementById("show-markers");
+
 // ---- キャンバスを作る ----
 // 白い枠（id="stage" の箱）と同じ大きさにする
 const container = document.getElementById("stage");
@@ -123,7 +126,11 @@ function makeWhiteTransparent(img) {
 // ---- 特徴点の印を作る ----
 // result: fetchPoints() の戻り値。座標は元の画像の大きさなので、表示の大きさに合わせて縮める
 function makeMarkers(result) {
-  const markers = new Konva.Group({ listening: false, name: "markers" });  // 印はクリックの対象にしない
+  const markers = new Konva.Group({
+    listening: false,  // 印はクリックの対象にしない
+    name: "markers",
+    visible: showMarkers.checked,  // 「特徴点を表示」のチェックに合わせる
+  });
   const scale = SHAPE_SIZE / result.width;
 
   for (const [label, points] of Object.entries(result.points)) {
@@ -200,6 +207,15 @@ for (const name of SHAPES) {
   });
   buttonBox.appendChild(button);
 }
+
+// ==============================
+// 特徴点の表示 ON/OFF
+// ==============================
+
+// チェックを切り替えたら、すべての図形の印を表示する／隠す（スナップは効いたまま）
+showMarkers.addEventListener("change", () => {
+  for (const markers of layer.find(".markers")) markers.visible(showMarkers.checked);
+});
 
 // ==============================
 // 選択・大きさの変更・削除
