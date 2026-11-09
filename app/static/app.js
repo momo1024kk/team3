@@ -106,16 +106,21 @@ async function fetchPoints(name) {
   const imageResponse = await fetch("/images/" + name + ".png");
   if (!imageResponse.ok) throw new Error("図形の画像を読み込めません：" + name);
 
-  // 2. 画像を API に送る（フォームでファイルを送るのと同じ形）
+  // 2. 画像を API に送る
+  const result = await detectPoints(await imageResponse.blob(), name + ".png");
+  pointsCache[name] = result;
+  return result;
+}
+
+// 画像のデータ（blob）を API に送って、特徴点を受け取る（フォームでファイルを送るのと同じ形）
+async function detectPoints(blob, fileName) {
   const form = new FormData();
-  form.append("file", await imageResponse.blob(), name + ".png");
+  form.append("file", blob, fileName);
   const response = await fetch("/api/detect", { method: "POST", body: form });
   const result = await response.json();
   if (!response.ok) {
     throw new Error(typeof result.detail === "string" ? result.detail : "特徴点の検出に失敗しました");
   }
-
-  pointsCache[name] = result;
   return result;
 }
 
@@ -159,7 +164,7 @@ function makeMarkers(result) {
     name: "markers",
     visible: showMarkers.checked,  // 「特徴点を表示」のチェックに合わせる
   });
-  const scale = SHAPE_SIZE / result.width;
+  const scale = pointScale(result);
 
   for (const [label, points] of Object.entries(result.points)) {
     const style = STYLES[label] || { color: "#000000", text: label[0] };
@@ -390,6 +395,188 @@ fontSizeInput.addEventListener("input", () => {
 });
 
 // ==============================
+// 画像
+// ==============================
+
+// 置くときの最大の大きさ（スライドの座標）。大きい画像は、この中に収まるように縮めて置く
+const IMAGE_MAX_SIZE = 400;
+// API に送るときの最大の大きさ（ピクセル）。大きすぎる写真をそのまま送ると時間がかかるので縮める
+const DETECT_MAX_SIZE = 800;
+
+// ---- お知らせを数秒だけ表示する ----
+const statusText = document.getElementById("status");
+let statusTimer = null;
+function notify(message) {
+  statusText.textContent = message;
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => (statusText.textContent = ""), 5000);
+}
+
+// ---- 画像ファイルを読み込んで、HTML の画像（Image）にする ----
+function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);  // パソコンの中のファイルを、ブラウザで開ける仮の URL にする
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);  // 読み込みが終わったら仮の URL は要らない
+      resolve(img);
+    };
+    img.onerror = () => reject(new Error("画像を読み込めません：" + file.name));
+    img.src = url;
+  });
+}
+
+// ---- 白い背景の上に画像を描いた canvas を作る ----
+// 透明な部分がある画像（PNG など）は、そのまま送ると API 側で透明な部分が黒くなってしまう。
+// 白い紙の上に描いてから送ることで、班の画像と同じ「白い背景に図形」の形にそろえる
+function drawOnWhite(img, maxSize) {
+  const fit = Math.min(1, maxSize / Math.max(img.width, img.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.width * fit));
+  canvas.height = Math.max(1, Math.round(img.height * fit));
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+// ---- 図形らしい画像かどうかを判断する ----
+// API（画像処理）は「一色の背景に、はっきりした図形」が写った画像向け。
+// 写真を送っても、変な位置に点が出るだけなので、次の2つを満たす画像だけを「図形らしい」とする
+//   1. 周り（上下左右の端）が、ほぼ一色（＝背景がはっきりしている）
+//   2. 使われている色が少ない（写真は色の種類がとても多い）
+function looksLikeShape(img) {
+  // 小さく縮めて調べる（64×64 で十分。速く終わる）
+  const N = 64;
+  const ctx = drawOnWhite(img, N).getContext("2d");
+  const { width, height } = ctx.canvas;
+  const px = ctx.getImageData(0, 0, width, height).data;  // [R, G, B, 透明度, R, G, B, 透明度, ...]
+  const color = (x, y) => {
+    const i = (y * width + x) * 4;
+    return [px[i], px[i + 1], px[i + 2]];
+  };
+  const isNear = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]) < 60;
+
+  // 1. 端の点のうち、左上の色（背景の色とみなす）に近いものの割合
+  const background = color(0, 0);
+  let edge = 0, edgeSame = 0;
+  for (let x = 0; x < width; x++) {
+    for (const y of [0, height - 1]) { edge++; if (isNear(color(x, y), background)) edgeSame++; }
+  }
+  for (let y = 0; y < height; y++) {
+    for (const x of [0, width - 1]) { edge++; if (isNear(color(x, y), background)) edgeSame++; }
+  }
+  const plainEdge = edgeSame / edge >= 0.9;
+
+  // 2. 色を大まかに 64 種類に分けて、多い順に 3 種類で全体の何割をしめるか
+  //    （R・G・B をそれぞれ 4 段階に分ける。図形の縁のにじんだ色があるので、少し余裕を見て 8 割）
+  const counts = {};
+  for (let i = 0; i < px.length; i += 4) {
+    const key = (px[i] >> 6) * 16 + (px[i + 1] >> 6) * 4 + (px[i + 2] >> 6);
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  const top3 = Object.values(counts).sort((a, b) => b - a).slice(0, 3).reduce((sum, n) => sum + n, 0);
+  const fewColors = top3 / (width * height) >= 0.8;
+
+  return plainEdge && fewColors;
+}
+
+// ---- 画像を1つキャンバスに置く ----
+// center: 置く場所の真ん中（スライドの座標）。省略するとスライドの真ん中
+async function addImageFile(file, center) {
+  if (!file.type.startsWith("image/")) {
+    notify("画像ファイル（PNG・JPEG など）を選んでください");
+    return;
+  }
+  let img;
+  try {
+    img = await loadImageFile(file);
+  } catch (error) {
+    notify(error.message);
+    return;
+  }
+
+  // 置く大きさ：縦横の比率はそのままで、IMAGE_MAX_SIZE に収める
+  const fit = Math.min(1, IMAGE_MAX_SIZE / Math.max(img.width, img.height));
+  const width = img.width * fit;
+  const height = img.height * fit;
+  if (!center) {
+    const shift = (addCount++ % 5) * 20;
+    center = { x: slide.width() / 2 + shift, y: slide.height() / 2 + shift };
+  }
+  const x = center.x - width / 2;
+  const y = center.y - height / 2;
+
+  // 図形らしい画像なら、API で特徴点を調べる
+  let result = null;
+  let message = "写真として追加しました。外枠（上下左右・中央）にスナップします";
+  if (looksLikeShape(img)) {
+    const white = drawOnWhite(img, DETECT_MAX_SIZE);
+    try {
+      const blob = await new Promise((resolve) => white.toBlob(resolve, "image/png"));
+      result = await detectPoints(blob, "upload.png");
+      // 点が1つも見つからなかったときは、写真と同じ扱いにする
+      if (Object.values(result.points).flat().length === 0) {
+        result = null;
+        message = "図形の特徴点が見つからなかったので、外枠にスナップします";
+      } else {
+        message = "図形として追加しました。画像処理で見つけた特徴点にスナップします";
+        result.displayWidth = width;  // API の座標を、置いた大きさに直すために覚えておく
+        img = white;                  // 白い背景つきの画像を使う（下で白を透明にする）
+      }
+    } catch (error) {
+      // API が動いていないときなど。画像は置けるので、外枠でスナップする
+      message = "特徴点を調べられなかったので、外枠にスナップします（" + error.message + "）";
+    }
+  }
+
+  let node;
+  if (result) {
+    // 図形：用意してある図形と同じく、画像と特徴点の印を1つのグループにする
+    node = new Konva.Group({ x: x, y: y, draggable: true, name: "item image" });
+    node.add(new Konva.Image({ image: makeWhiteTransparent(img), width: width, height: height }));
+    node.add(makeMarkers(result));
+    node.setAttr("points", result);
+    node.on("transform", () => keepMarkerSize(node));
+  } else {
+    // 写真：画像をそのまま置く。スナップは外枠の 9 点（テキストと同じ）
+    node = new Konva.Image({ x: x, y: y, image: img, width: width, height: height, draggable: true, name: "item image" });
+  }
+  makeMovable(node);
+  layer.add(node);
+  select(node);
+  notify(message);
+}
+
+// 画像ボタン：押すとファイルを選ぶ画面を出す
+const imageFileInput = document.getElementById("image-file");
+document.getElementById("add-image").addEventListener("click", () => imageFileInput.click());
+imageFileInput.addEventListener("change", async () => {
+  for (const file of imageFileInput.files) await addImageFile(file);
+  imageFileInput.value = "";  // 同じファイルをもう一度選んでも反応するように、選択を空にする
+});
+
+// 画像ファイルをスライドの上にドラッグ＆ドロップしても追加できる
+container.addEventListener("dragover", (e) => {
+  e.preventDefault();  // これがないと、ブラウザが画像を新しいタブで開いてしまう
+  container.classList.add("drop-target");
+});
+container.addEventListener("dragleave", () => container.classList.remove("drop-target"));
+container.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  container.classList.remove("drop-target");
+  // 落とした場所を、スライドの座標に直す
+  stage.setPointersPositions(e);
+  const point = layer.getRelativePointerPosition();
+  for (const file of e.dataTransfer.files) {
+    await addImageFile(file, { ...point });
+    point.x += 20;  // 何枚か一度に落としたときは、少しずつずらす
+    point.y += 20;
+  }
+});
+
+// ==============================
 // 図形を追加するボタン
 // ==============================
 
@@ -479,15 +666,21 @@ function keepMarkerSize(group) {
 // スナップ
 // ==============================
 
+// API の座標（元の画像の大きさ）を、画面に置いた大きさに直すための倍率。
+// 用意してある図形は SHAPE_SIZE で置く。追加した画像は、置いた幅を displayWidth に覚えさせてある
+function pointScale(result) {
+  return (result.displayWidth || SHAPE_SIZE) / result.width;
+}
+
 // 吸い付く点を、部品自身の中での座標で返す（拡大・移動する前の位置）
 function localSnapPoints(node) {
   // 図形：画像処理（API）で見つけた特徴点
   const result = node.getAttr("points");
   if (result) {
-    const scale = SHAPE_SIZE / result.width;
+    const scale = pointScale(result);
     return Object.values(result.points).flat().map(([x, y]) => ({ x: x * scale, y: y * scale }));
   }
-  // テキスト：画像処理は使わず、文字の外枠の四角から計算する。
+  // テキスト・写真：画像処理は使わず、外枠の四角から計算する。
   // 左端・中央・右端 × 上端・真ん中・下端 の 9 点
   const list = [];
   for (const x of [0, node.width() / 2, node.width()]) {

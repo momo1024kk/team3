@@ -142,3 +142,49 @@ body {
   white-space: pre;
   transform-origin: left top;
 }
+
+/* 画像を追加するボタンの絵 */
+.shape-buttons #add-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #333;
+}
+
+/* お知らせ（画像を読み込んだときなど）。画面の下の真ん中に浮かせて出す */
+.status {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 6px;
+  background: rgba(30, 30, 30, 0.85);
+  color: #ffffff;
+  font-size: 14px;
+  pointer-events: none;  /* お知らせの上からでも、下の図形をつかめるようにする */
+}
+
+.status:empty {
+  display: none;  /* 何も書いていないときは隠す */
+}
+
+/* ツールバーの文字が2行に折り返さないようにする。
+   画面が狭いときは、右端の説明文だけを「…」で省略する */
+.toolbar h1,
+.toolbar .toggle {
+  white-space: nowrap;
+}
+
+.toolbar .hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 画像をドラッグしてスライドの上に持ってきている間、枠の色を変えて「ここに落とせる」と分かるようにする */
+#stage.drop-target {
+  outline: 3px dashed #7a9cff;
+  outline-offset: -6px;
+}
