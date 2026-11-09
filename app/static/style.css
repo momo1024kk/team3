@@ -188,3 +188,20 @@ body {
   outline: 3px dashed #7a9cff;
   outline-offset: -6px;
 }
+
+/* PNG で保存するボタン */
+.export-button {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #7a9cff;
+  border-radius: 6px;
+  background: #eef3ff;
+  color: #2a4bb8;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.export-button:hover {
+  background: #dce6ff;
+}

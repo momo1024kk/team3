@@ -783,3 +783,41 @@ SHAPES.forEach((name, i) => {
   const row = Math.floor(i / 3);
   addShape(name, slide.x() + 40 + col * (SHAPE_SIZE + 40), slide.y() + 20 + row * (SHAPE_SIZE + 20));
 });
+
+// ==============================
+// PNG で保存
+// ==============================
+
+// 保存する画像の幅（ピクセル）。高さは 16:9 なので 1080 になる
+const EXPORT_WIDTH = 1920;
+
+document.getElementById("export-png").addEventListener("click", () => {
+  // 1. 保存する画像に写したくない「編集用の表示」を、いったん隠す
+  //    （選択の枠・特徴点の印・ガイド線）
+  const selected = transformer.nodes();
+  transformer.nodes([]);
+  const markers = layer.find(".markers");
+  const wasVisible = markers.map((m) => m.visible());
+  markers.forEach((m) => m.visible(false));
+  guideLayer.destroyChildren();
+
+  // 2. スライドの白い部分だけを切り取って画像にする。
+  //    画面上のスライドの位置と大きさを調べ、幅が EXPORT_WIDTH になる倍率で書き出す
+  const box = slide.getClientRect({ skipShadow: true });
+  const dataUrl = stage.toDataURL({
+    x: box.x, y: box.y, width: box.width, height: box.height,
+    pixelRatio: EXPORT_WIDTH / box.width,
+    mimeType: "image/png",
+  });
+
+  // 3. 隠したものを元に戻す
+  markers.forEach((m, i) => m.visible(wasVisible[i]));
+  transformer.nodes(selected);
+
+  // 4. ダウンロードさせる（リンクを作って、自動でクリックする）
+  const link = document.createElement("a");
+  link.href = dataUrl;
+  link.download = "slide.png";
+  link.click();
+  notify("スライドを slide.png として保存しました");
+});
