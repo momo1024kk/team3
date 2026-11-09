@@ -20,6 +20,9 @@ const SLIDE_HEIGHT = 720;
 // スナップする距離（画面上のピクセル）。特徴点どうしの縦か横の位置がこれ以内なら吸い付く
 const SNAP_DISTANCE = 6;
 
+// 特徴点の印をまとめる距離（元の画像のピクセル）。これより近い点は、同じ場所として印を1つにする
+const MARKER_MERGE_DISTANCE = 3;
+
 // ガイド線の色
 const GUIDE_COLOR = "#ff3b7f";
 
@@ -166,17 +169,34 @@ function makeMarkers(result) {
   });
   const scale = pointScale(result);
 
+  // 1. 同じ場所にある点をまとめる。
+  //    例：星のてっぺんは「上（T）」でもあり「頂点（V）」でもあるので、そのままだと印が重なって読めない
+  const spots = [];  // まとめた場所の一覧。1つの場所 = { x, y, labels: ["top", "vertex"] }
   for (const [label, points] of Object.entries(result.points)) {
-    const style = STYLES[label] || { color: "#000000", text: label[0] };
     for (const [x, y] of points) {
-      markers.add(new Konva.Circle({
-        x: x * scale, y: y * scale, radius: 4, fill: style.color,
-      }));
-      markers.add(new Konva.Text({
-        x: x * scale + 5, y: y * scale - 14, text: style.text,
+      // すでに近く（MARKER_MERGE_DISTANCE 以内）にまとめた場所があれば、そこに入れる
+      let spot = spots.find((s) => Math.hypot(s.x - x, s.y - y) <= MARKER_MERGE_DISTANCE);
+      if (!spot) {
+        spot = { x: x, y: y, labels: [] };
+        spots.push(spot);
+      }
+      if (!spot.labels.includes(label)) spot.labels.push(label);
+    }
+  }
+
+  // 2. 場所ごとに、丸は1つだけ描き、文字は横に並べる（色は種類ごとのまま）
+  for (const spot of spots) {
+    const styles = spot.labels.map((label) => STYLES[label] || { color: "#000000", text: label[0] });
+    // 丸と文字を1つのグループにまとめる。拡大・縮小しても、文字どうしの間隔が崩れない
+    const mark = new Konva.Group({ x: spot.x * scale, y: spot.y * scale });
+    mark.add(new Konva.Circle({ radius: 4, fill: styles[0].color }));
+    styles.forEach((style, i) => {
+      mark.add(new Konva.Text({
+        x: 5 + i * 10, y: -14, text: style.text,
         fontSize: 12, fontStyle: "bold", fill: style.color,
       }));
-    }
+    });
+    markers.add(mark);
   }
   return markers;
 }
@@ -790,12 +810,7 @@ function snap(moving) {
   }
 }
 
-// ---- 最初の配置：6つの図形を、スライドの中に横に3つずつ並べる ----
-SHAPES.forEach((name, i) => {
-  const col = i % 3;
-  const row = Math.floor(i / 3);
-  addShape(name, slide.x() + 40 + col * (SHAPE_SIZE + 40), slide.y() + 20 + row * (SHAPE_SIZE + 20));
-});
+// 最初は何も置かない（白紙のスライドから始める）。図形は上のバーのボタンで追加する
 
 // ==============================
 // PNG で保存
