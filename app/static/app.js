@@ -270,22 +270,18 @@ function addText(x, y) {
 // ---- 文字の編集 ----
 // Konva には文字を直接打ち込む機能がないので、HTML の入力欄（textarea）を
 // テキストの上にぴったり重ねて出し、打ち終わったら内容をテキストに戻す
+// 文字を編集している間だけ、編集を終わらせる関数が入る（編集していないときは null）
+let stopEditing = null;
+
 function startEditing(text) {
   transformer.nodes([]);
   updateTextTools();
   text.hide();  // 編集中は、下のテキストを隠して入力欄だけ見せる
 
-  // テキストの画面上の位置と、画面上での文字の大きさ
-  const box = text.getClientRect();
-  const scale = stage.scaleX() * text.scaleX();
-
   const area = document.createElement("textarea");
   area.className = "text-editor";
   area.value = text.text();
   Object.assign(area.style, {
-    left: box.x + "px",
-    top: box.y + "px",
-    fontSize: text.fontSize() * scale + "px",
     fontFamily: text.fontFamily(),
     fontWeight: text.fontStyle().includes("bold") ? "bold" : "normal",
     lineHeight: text.lineHeight(),
@@ -293,33 +289,48 @@ function startEditing(text) {
   });
   container.appendChild(area);
 
-  // 打った文字の量に合わせて、入力欄の大きさを広げる
-  function fitSize() {
+  // 入力欄を、テキストの画面上の位置と大きさにぴったり合わせる。
+  // ウィンドウの大きさが変わるとスライドの拡大率が変わるので、そのたびに合わせ直す
+  function place() {
+    const scale = stage.scaleX() * text.scaleX();  // 画面上での文字の拡大率
+    const box = text.getClientRect();              // 画面上でのテキストの位置
+    area.style.left = box.x + "px";
+    area.style.top = box.y + "px";
+    area.style.fontSize = text.fontSize() * scale + "px";
+    // 打った文字の量に合わせて、入力欄の大きさを広げる
     area.style.width = "0px";
     area.style.height = "0px";
     area.style.width = area.scrollWidth + text.fontSize() * scale + "px";  // 次の1文字ぶん余裕を持たせる
     area.style.height = area.scrollHeight + "px";
   }
-  fitSize();
-  area.addEventListener("input", fitSize);
+  place();
+  area.addEventListener("input", place);
+  window.addEventListener("resize", place);
   area.focus();
   area.select();  // 最初は全部選んだ状態にして、すぐに打ち直せるようにする
 
   let finished = false;
-  // save が true なら打った内容を残す、false なら元に戻す
-  function finish(save) {
+  // save が true なら打った内容を残す、false なら元に戻す。
+  // reselect が true なら、終わったあとにこのテキストを選んだ状態にする
+  function finish(save, reselect = true) {
     if (finished) return;  // 2回呼ばれても1回だけ処理する
     finished = true;
+    stopEditing = null;
+    window.removeEventListener("resize", place);
     if (save) text.text(area.value);
     area.remove();
     text.show();
-    // 空っぽになったテキストは消す。そうでなければ選んだ状態に戻す
     if (text.text().trim() === "") {
+      // 空っぽになったテキストは消す
       text.destroy();
-    } else {
+    } else if (reselect && transformer.nodes().length === 0) {
+      // ほかのものが選ばれていなければ、このテキストを選ぶ。
+      // 入力中に別の図形をクリックしたときは、その図形の選択をそのまま残す
+      // （ここで上書きすると、Delete キーでクリックした図形ではなくテキストが消えてしまう）
       select(text);
     }
   }
+  stopEditing = finish;
 
   area.addEventListener("keydown", (e) => {
     // 日本語の変換中（isComposing）の Enter は「変換の確定」なので、編集は終わらせない
@@ -450,6 +461,8 @@ function select(node) {
 // 何もないところをクリックしたら、選択を外す
 stage.on("mousedown touchstart", (e) => {
   if (e.target === stage) {
+    // 文字の編集中なら、打った内容を残して終わらせる。何もないところを押したので、何も選ばない
+    if (stopEditing) stopEditing(true, false);
     transformer.nodes([]);
     updateTextTools();
   }
