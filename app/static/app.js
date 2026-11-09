@@ -425,9 +425,4 @@ function snap(moving) {
   }
 }
 
-// ---- 最初の配置：6つの図形を、スライドの中に横に3つずつ並べる ----
-SHAPES.forEach((name, i) => {
-  const col = i % 3;
-  const row = Math.floor(i / 3);
-  addShape(name, slide.x() + 40 + col * (SHAPE_SIZE + 40), slide.y() + 20 + row * (SHAPE_SIZE + 20));
-});
+// 最初は何も置かない（白紙のスライドから始める）。図形は上のバーのボタンで追加する
