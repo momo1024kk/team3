@@ -217,7 +217,8 @@ async function addShape(name, x, y) {
     throw error;
   }
 
-  const group = new Konva.Group({ x: x, y: y, draggable: true, name: name });
+  // name の "item" は「スライドに置いた部品」の目印（図形もテキストも付ける）
+  const group = new Konva.Group({ x: x, y: y, draggable: true, name: "item " + name });
   group.add(new Konva.Image({
     image: makeWhiteTransparent(img), width: SHAPE_SIZE, height: SHAPE_SIZE,
   }));
@@ -226,20 +227,7 @@ async function addShape(name, x, y) {
   // 後でスナップに使うので、特徴点のデータをグループに覚えさせておく
   group.setAttr("points", result);
 
-  // マウスを乗せたら、つかめることが分かるようにカーソルを変える
-  group.on("mouseenter", () => (stage.container().style.cursor = "grab"));
-  group.on("mouseleave", () => (stage.container().style.cursor = "default"));
-
-  // ドラッグ中のスナップ
-  group.on("dragstart", () => {
-    group.moveToTop();        // つかんだ図形を一番手前にする
-    transformer.moveToTop();  // 選択の枠は、さらにその手前
-  });
-  group.on("dragmove", () => snap(group));
-  group.on("dragend", () => guideLayer.destroyChildren());  // 離したらガイド線を消す
-
-  // クリック（またはドラッグ開始）で選択する
-  group.on("mousedown touchstart", () => select(group));
+  makeMovable(group);
 
   // 大きさを変えている間、印の大きさは変わらないようにする
   group.on("transform", () => keepMarkerSize(group));
@@ -247,6 +235,190 @@ async function addShape(name, x, y) {
   layer.add(group);
   return group;
 }
+
+// ---- 図形・テキストに共通の動き（ドラッグ・スナップ・選択）を付ける ----
+function makeMovable(node) {
+  // マウスを乗せたら、つかめることが分かるようにカーソルを変える
+  node.on("mouseenter", () => (stage.container().style.cursor = "grab"));
+  node.on("mouseleave", () => (stage.container().style.cursor = "default"));
+
+  // ドラッグ中のスナップ
+  node.on("dragstart", () => {
+    node.moveToTop();         // つかんだものを一番手前にする
+    transformer.moveToTop();  // 選択の枠は、さらにその手前
+  });
+  node.on("dragmove", () => snap(node));
+  node.on("dragend", () => guideLayer.destroyChildren());  // 離したらガイド線を消す
+
+  // クリック（またはドラッグ開始）で選択する
+  node.on("mousedown touchstart", () => select(node));
+}
+
+// ==============================
+// テキスト
+// ==============================
+
+// 新しいテキストの最初の見た目
+const TEXT_DEFAULTS = {
+  text: "テキスト",
+  fontSize: 40,  // スライドの座標での大きさ（スライドの幅は 1280）
+  fontFamily: document.querySelector("#font-family option").value,  // 一覧の一番上（ゴシック体）
+  fill: "#222222",
+  fontStyle: "normal",
+};
+
+// ---- テキストを1つキャンバスに置く ----
+function addText(x, y) {
+  const text = new Konva.Text({ ...TEXT_DEFAULTS, x: x, y: y, draggable: true, name: "item text" });
+  makeMovable(text);
+
+  // ダブルクリック（スマホではダブルタップ）で文字を編集する
+  text.on("dblclick dbltap", () => startEditing(text));
+
+  // 四隅のつまみで大きさを変えたら、引き伸ばすのではなく文字の大きさ（fontSize）に直す。
+  // こうすると、文字の設定欄の「大きさ」と見た目がいつも一致する
+  text.on("transformend", () => {
+    text.fontSize(Math.round(text.fontSize() * text.scaleX()));
+    text.scale({ x: 1, y: 1 });
+    updateTextTools();
+  });
+
+  layer.add(text);
+  return text;
+}
+
+// ---- 文字の編集 ----
+// Konva には文字を直接打ち込む機能がないので、HTML の入力欄（textarea）を
+// テキストの上にぴったり重ねて出し、打ち終わったら内容をテキストに戻す
+// 文字を編集している間だけ、編集を終わらせる関数が入る（編集していないときは null）
+let stopEditing = null;
+
+function startEditing(text) {
+  transformer.nodes([]);
+  updateTextTools();
+  text.hide();  // 編集中は、下のテキストを隠して入力欄だけ見せる
+
+  const area = document.createElement("textarea");
+  area.className = "text-editor";
+  area.value = text.text();
+  Object.assign(area.style, {
+    fontFamily: text.fontFamily(),
+    fontWeight: text.fontStyle().includes("bold") ? "bold" : "normal",
+    lineHeight: text.lineHeight(),
+    color: text.fill(),
+  });
+  container.appendChild(area);
+
+  // 入力欄を、テキストの画面上の位置と大きさにぴったり合わせる。
+  // ウィンドウの大きさが変わるとスライドの拡大率が変わるので、そのたびに合わせ直す
+  function place() {
+    const scale = stage.scaleX() * text.scaleX();  // 画面上での文字の拡大率
+    const box = text.getClientRect();              // 画面上でのテキストの位置
+    area.style.left = box.x + "px";
+    area.style.top = box.y + "px";
+    area.style.fontSize = text.fontSize() * scale + "px";
+    // 打った文字の量に合わせて、入力欄の大きさを広げる
+    area.style.width = "0px";
+    area.style.height = "0px";
+    area.style.width = area.scrollWidth + text.fontSize() * scale + "px";  // 次の1文字ぶん余裕を持たせる
+    area.style.height = area.scrollHeight + "px";
+  }
+  place();
+  area.addEventListener("input", place);
+  window.addEventListener("resize", place);
+  area.focus();
+  area.select();  // 最初は全部選んだ状態にして、すぐに打ち直せるようにする
+
+  let finished = false;
+  // save が true なら打った内容を残す、false なら元に戻す。
+  // reselect が true なら、終わったあとにこのテキストを選んだ状態にする
+  function finish(save, reselect = true) {
+    if (finished) return;  // 2回呼ばれても1回だけ処理する
+    finished = true;
+    stopEditing = null;
+    window.removeEventListener("resize", place);
+    if (save) text.text(area.value);
+    area.remove();
+    text.show();
+    if (text.text().trim() === "") {
+      // 空っぽになったテキストは消す
+      text.destroy();
+    } else if (reselect && transformer.nodes().length === 0) {
+      // ほかのものが選ばれていなければ、このテキストを選ぶ。
+      // 入力中に別の図形をクリックしたときは、その図形の選択をそのまま残す
+      // （ここで上書きすると、Delete キーでクリックした図形ではなくテキストが消えてしまう）
+      select(text);
+    }
+  }
+  stopEditing = finish;
+
+  area.addEventListener("keydown", (e) => {
+    // 日本語の変換中（isComposing）の Enter は「変換の確定」なので、編集は終わらせない
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();  // Enter で確定。改行したいときは Shift + Enter
+      finish(true);
+    } else if (e.key === "Escape") {
+      finish(false);       // Esc で取り消し
+    }
+  });
+  // 入力欄の外をクリックしたときも確定する
+  area.addEventListener("blur", () => finish(true));
+}
+
+// 「T」ボタン：スライドの真ん中にテキストを置いて、すぐに編集を始める
+document.getElementById("add-text").addEventListener("click", () => {
+  const shift = (addCount++ % 5) * 20;
+  const text = addText(0, 0);
+  // 文字の大きさが分かってから、真ん中に来るように位置を決める
+  text.position({
+    x: slide.width() / 2 - text.width() / 2 + shift,
+    y: slide.height() / 2 - text.height() / 2 + shift,
+  });
+  startEditing(text);
+});
+
+// ---- 文字の設定欄（フォント・大きさ・色・太字）----
+const textTools = document.getElementById("text-tools");
+const fontFamilyInput = document.getElementById("font-family");
+const fontSizeInput = document.getElementById("font-size");
+const fontColorInput = document.getElementById("font-color");
+const fontBoldInput = document.getElementById("font-bold");
+
+// 今選んでいるテキスト。テキスト以外を選んでいるとき・何も選んでいないときは null
+function selectedText() {
+  const node = transformer.nodes()[0];
+  return node && node.hasName("text") ? node : null;
+}
+
+// 設定欄の表示を、選んでいるテキストに合わせる
+function updateTextTools() {
+  const text = selectedText();
+  textTools.disabled = !text;
+  if (!text) return;
+  fontFamilyInput.value = text.fontFamily();
+  fontSizeInput.value = text.fontSize();
+  fontColorInput.value = text.fill();
+  fontBoldInput.checked = text.fontStyle().includes("bold");
+}
+
+// 設定欄を変えたら、選んでいるテキストに反映する
+function changeText(apply) {
+  const text = selectedText();
+  if (!text) return;
+  apply(text);
+  transformer.forceUpdate();  // 文字の大きさが変わるので、選択の枠も合わせ直す
+}
+
+fontFamilyInput.addEventListener("change", () => changeText((t) => t.fontFamily(fontFamilyInput.value)));
+fontColorInput.addEventListener("input", () => changeText((t) => t.fill(fontColorInput.value)));
+fontBoldInput.addEventListener("change", () => {
+  changeText((t) => t.fontStyle(fontBoldInput.checked ? "bold" : "normal"));
+});
+fontSizeInput.addEventListener("input", () => {
+  const size = Number(fontSizeInput.value);
+  if (size >= 8 && size <= 200) changeText((t) => t.fontSize(size));  // 打ちかけの変な値は無視する
+});
 
 // ==============================
 // 図形を追加するボタン
@@ -289,30 +461,41 @@ const transformer = new Konva.Transformer({
   rotateEnabled: false,  // 回転は、スナップの対応が終わってから
   keepRatio: true,       // 縦横の比率を保つ
   enabledAnchors: ["top-left", "top-right", "bottom-left", "bottom-right"],
-  // 小さくしすぎないようにする（スライドの座標で 40 未満にはしない）。
-  // newBox は画面上のピクセルなので、拡大率をかけて比べる
+  // 小さくしすぎないようにする（スライドの座標で 20 未満には縮めない）。
+  // newBox は画面上のピクセルなので、拡大率をかけて比べる。
+  // 最初から小さい文字でも大きくはできるように、縮めるときだけ止める
   boundBoxFunc: (oldBox, newBox) => {
-    const min = 40 * stage.scaleX();
-    return newBox.width < min || newBox.height < min ? oldBox : newBox;
+    const min = 20 * stage.scaleX();
+    const tooSmall = newBox.width < min || newBox.height < min;
+    return tooSmall && newBox.width < oldBox.width ? oldBox : newBox;
   },
 });
 layer.add(transformer);
 
-function select(group) {
-  transformer.nodes([group]);
+function select(node) {
+  transformer.nodes([node]);
   transformer.moveToTop();
+  updateTextTools();  // テキストを選んだら、文字の設定欄を使えるようにする
 }
 
 // 何もないところをクリックしたら、選択を外す
 stage.on("mousedown touchstart", (e) => {
-  if (e.target === stage) transformer.nodes([]);
+  if (e.target === stage) {
+    // 文字の編集中なら、打った内容を残して終わらせる。何もないところを押したので、何も選ばない
+    if (stopEditing) stopEditing(true, false);
+    transformer.nodes([]);
+    updateTextTools();
+  }
 });
 
 // Delete キー（または Backspace キー）で、選択中の図形を消す
 window.addEventListener("keydown", (e) => {
   if (e.key !== "Delete" && e.key !== "Backspace") return;
+  // 入力欄（文字の編集・大きさの数字など）で文字を消しているときは、図形を消さない
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
   for (const node of transformer.nodes()) node.destroy();
   transformer.nodes([]);
+  updateTextTools();
 });
 
 // 図形を拡大・縮小すると、中の印や文字まで一緒に大きくなってしまう。
@@ -329,19 +512,28 @@ function keepMarkerSize(group) {
 // スナップ
 // ==============================
 
-// 図形の特徴点を、キャンバス全体での座標（画面上の位置）にして返す
-// getTransform() は「図形の位置と拡大率」をまとめたもの。これで大きさを変えた図形にも対応できる
-function canvasPoints(group) {
-  const result = group.getAttr("points");
-  const scale = SHAPE_SIZE / result.width;
-  const transform = group.getTransform();
+// 吸い付く点を、部品自身の中での座標で返す（拡大・移動する前の位置）
+function localSnapPoints(node) {
+  // 図形：画像処理（API）で見つけた特徴点
+  const result = node.getAttr("points");
+  if (result) {
+    const scale = SHAPE_SIZE / result.width;
+    return Object.values(result.points).flat().map(([x, y]) => ({ x: x * scale, y: y * scale }));
+  }
+  // テキスト：画像処理は使わず、文字の外枠の四角から計算する。
+  // 左端・中央・右端 × 上端・真ん中・下端 の 9 点
   const list = [];
-  for (const points of Object.values(result.points)) {
-    for (const [x, y] of points) {
-      list.push(transform.point({ x: x * scale, y: y * scale }));
-    }
+  for (const x of [0, node.width() / 2, node.width()]) {
+    for (const y of [0, node.height() / 2, node.height()]) list.push({ x, y });
   }
   return list;
+}
+
+// 吸い付く点を、スライドの座標にして返す
+// getTransform() は「部品の位置と拡大率」をまとめたもの。これで大きさを変えた部品にも対応できる
+function canvasPoints(node) {
+  const transform = node.getTransform();
+  return localSnapPoints(node).map((p) => transform.point(p));
 }
 
 // 動かしている図形の位置（values）と、吸い付く先の位置（targets）の組み合わせの中から、
@@ -395,7 +587,7 @@ function snap(moving) {
   guideLayer.destroyChildren();  // 前回のガイド線を消す
 
   // 他の図形の点を全部集める
-  const others = layer.getChildren((node) => node !== moving && node.getAttr("points"));
+  const others = layer.getChildren((node) => node !== moving && node.hasName("item"));
   const otherPoints = others.flatMap(canvasPoints);
 
   // 吸い付く先：他の図形の点と、スライドの端・中央の線
