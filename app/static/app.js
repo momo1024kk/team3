@@ -12,7 +12,12 @@ const SHAPE_NAMES = {
 // 画面に表示するときの図形の大きさ（元の画像は 400×400）
 const SHAPE_SIZE = 200;
 
-// スナップする距離（ピクセル）。特徴点どうしの縦か横の位置がこれ以内なら吸い付く
+// スライドの大きさ。図形の位置や大きさは、すべてこのスライドの中での座標で表す。
+// 画面（ウィンドウ）の大きさが変わったら、キャンバス全体を拡大・縮小して合わせるので、この座標は変わらない
+const SLIDE_WIDTH = 1280;
+const SLIDE_HEIGHT = 720;
+
+// スナップする距離（画面上のピクセル）。特徴点どうしの縦か横の位置がこれ以内なら吸い付く
 const SNAP_DISTANCE = 6;
 
 // ガイド線の色
@@ -47,20 +52,29 @@ const guideLayer = new Konva.Layer({ listening: false });  // ガイド線を描
 stage.add(guideLayer);
 
 // ---- スライド（16:9 の白い四角）----
-// 作業スペースの真ん中に、はみ出さない一番大きいサイズで置く
+// スライドの左上が座標 (0, 0)、右下が (SLIDE_WIDTH, SLIDE_HEIGHT)
 const slide = new Konva.Rect({
+  x: 0, y: 0, width: SLIDE_WIDTH, height: SLIDE_HEIGHT,
   fill: "#ffffff",
   shadowColor: "black", shadowOpacity: 0.15, shadowBlur: 8, shadowOffsetY: 2,
 });
 slideLayer.add(slide);
 
-function layoutSlide() {
-  const pad = 32;  // スライドのまわりの余白
-  const w = Math.min(stage.width() - pad * 2, ((stage.height() - pad * 2) * 16) / 9);
-  const h = (w * 9) / 16;
-  slide.setAttrs({ x: (stage.width() - w) / 2, y: (stage.height() - h) / 2, width: w, height: h });
+// スライドが作業スペースの真ん中に、はみ出さない一番大きいサイズで見えるように、
+// キャンバス全体の拡大率（scale）と位置をずらす。図形の座標そのものは変えない
+function layoutStage() {
+  const pad = 32;  // スライドのまわりの余白（画面上のピクセル）
+  const scale = Math.max(0.1, Math.min(
+    (stage.width() - pad * 2) / SLIDE_WIDTH,
+    (stage.height() - pad * 2) / SLIDE_HEIGHT,
+  ));
+  stage.scale({ x: scale, y: scale });
+  stage.position({
+    x: (stage.width() - SLIDE_WIDTH * scale) / 2,
+    y: (stage.height() - SLIDE_HEIGHT * scale) / 2,
+  });
 }
-layoutSlide();
+layoutStage();
 
 // スライドの「端」と「中央」の線。図形の特徴点はここにも吸い付く
 function slideLines() {
@@ -71,11 +85,12 @@ function slideLines() {
   };
 }
 
-// ウィンドウの大きさが変わったら、キャンバスとスライドも合わせて大きさを変える
+// ウィンドウの大きさが変わったら、キャンバスの大きさと拡大率を合わせ直す。
+// 図形はスライドの座標で置いてあるので、スライドと一緒に拡大・縮小され、位置はずれない
 window.addEventListener("resize", () => {
   stage.width(container.clientWidth);
   stage.height(container.clientHeight);
-  layoutSlide();
+  layoutStage();
 });
 
 // ---- 特徴点を取ってくる ----
@@ -254,8 +269,12 @@ const transformer = new Konva.Transformer({
   rotateEnabled: false,  // 回転は、スナップの対応が終わってから
   keepRatio: true,       // 縦横の比率を保つ
   enabledAnchors: ["top-left", "top-right", "bottom-left", "bottom-right"],
-  // 小さくしすぎないようにする（40px 未満にはしない）
-  boundBoxFunc: (oldBox, newBox) => (newBox.width < 40 || newBox.height < 40 ? oldBox : newBox),
+  // 小さくしすぎないようにする（スライドの座標で 40 未満にはしない）。
+  // newBox は画面上のピクセルなので、拡大率をかけて比べる
+  boundBoxFunc: (oldBox, newBox) => {
+    const min = 40 * stage.scaleX();
+    return newBox.width < min || newBox.height < min ? oldBox : newBox;
+  },
 });
 layer.add(transformer);
 
@@ -308,11 +327,14 @@ function canvasPoints(group) {
 // 動かしている図形の位置（values）と、吸い付く先の位置（targets）の組み合わせの中から、
 // 差が一番小さいものを探す。SNAP_DISTANCE より遠ければ null
 function findClosest(values, targets) {
+  // SNAP_DISTANCE は画面上のピクセルなので、スライドの座標での距離に直す
+  // （画面が小さくスライドが縮んで見えるときでも、吸い付く感覚が変わらないように）
+  const limit = SNAP_DISTANCE / stage.scaleX();
   let best = null;
   for (const v of values) {
     for (const t of targets) {
       const diff = t - v;
-      if (Math.abs(diff) <= SNAP_DISTANCE && (best === null || Math.abs(diff) < Math.abs(best))) {
+      if (Math.abs(diff) <= limit && (best === null || Math.abs(diff) < Math.abs(best))) {
         best = diff;
       }
     }
@@ -324,7 +346,10 @@ function findClosest(values, targets) {
 function drawSlideGuide(value, axis) {
   const { x, y, width, height } = slide.attrs;
   const points = axis === "x" ? [value, y, value, y + height] : [x, value, x + width, value];
-  guideLayer.add(new Konva.Line({ points: points, stroke: GUIDE_COLOR, strokeWidth: 1 }));
+  // strokeScaleEnabled: false … 拡大・縮小しても線の太さは画面上で 1px のまま
+  guideLayer.add(new Konva.Line({
+    points: points, stroke: GUIDE_COLOR, strokeWidth: 1, strokeScaleEnabled: false,
+  }));
 }
 
 // ガイド線を1本描く。2つの点を結ぶ線を、少しはみ出す長さで描き、両端の点に輪を付ける
@@ -333,9 +358,15 @@ function drawGuide(a, b, axis) {
   const points = axis === "x"
     ? [a.x, Math.min(a.y, b.y) - margin, a.x, Math.max(a.y, b.y) + margin]  // 縦の線
     : [Math.min(a.x, b.x) - margin, a.y, Math.max(a.x, b.x) + margin, a.y]; // 横の線
-  guideLayer.add(new Konva.Line({ points: points, stroke: GUIDE_COLOR, strokeWidth: 1, dash: [4, 4] }));
+  guideLayer.add(new Konva.Line({
+    points: points, stroke: GUIDE_COLOR, strokeWidth: 1, dash: [4, 4], strokeScaleEnabled: false,
+  }));
+  // 輪の大きさも、画面上で同じ大きさに見えるように拡大率で割る
+  const radius = 7 / stage.scaleX();
   for (const p of [a, b]) {
-    guideLayer.add(new Konva.Circle({ x: p.x, y: p.y, radius: 7, stroke: GUIDE_COLOR, strokeWidth: 2 }));
+    guideLayer.add(new Konva.Circle({
+      x: p.x, y: p.y, radius: radius, stroke: GUIDE_COLOR, strokeWidth: 2, strokeScaleEnabled: false,
+    }));
   }
 }
 
