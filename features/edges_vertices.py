@@ -52,7 +52,8 @@ def analyze_contour(
         return empty
 
     # 小さな角を拾う近似と、円弧を短い辺に分割しない近似を分ける。
-    corner_approx = cv2.approxPolyDP(contour, corner_epsilon_ratio * perimeter, True)
+    # 小さい図形の角にある1pxの画素段差を別々の頂点として拾わない。
+    corner_approx = cv2.approxPolyDP(contour, max(corner_epsilon_ratio * perimeter, 1.0), True)
     edge_approx = cv2.approxPolyDP(contour, epsilon_ratio * perimeter, True)
     candidates = [tuple(map(int, xy)) for xy in corner_approx.reshape(-1, 2)]
     edge_candidates = [tuple(map(int, xy)) for xy in edge_approx.reshape(-1, 2)]
