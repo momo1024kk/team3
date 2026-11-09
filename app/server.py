@@ -8,7 +8,7 @@ from shutil import copyfileobj
 from tempfile import TemporaryDirectory
 
 import cv2
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -40,6 +40,24 @@ class DetectionResult(BaseModel):
 
 
 app = FastAPI(title="team3 特徴点検出 API")
+
+
+@app.middleware("http")
+async def check_screen_files_every_time(request: Request, call_next):
+    """画面のファイル（index.html・app.js・style.css・画像）が古いまま表示されないようにする。
+
+    ブラウザは一度読んだファイルを覚えておき、次から使い回すことがある。
+    そのせいで、app.js などを直しても再読み込みで変わらないことがあった。
+    "no-cache" は「使う前に、変わっていないかサーバーに確認して」という意味。
+    変わっていなければ短い返事（304）で済むので、遅くはならない。
+    """
+    response = await call_next(request)
+    # API（/api/...）とテスト画面（/docs など）はそのままにする
+    if not request.url.path.startswith(("/api/", "/docs", "/redoc", "/openapi.json")):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
 
