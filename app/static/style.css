@@ -86,3 +86,59 @@ body {
   min-height: 0;
   overflow: hidden;
 }
+
+/* テキストを追加するボタン（図形のボタンと同じ見た目で、中に「T」と書く） */
+.shape-buttons .text-button {
+  font-size: 18px;
+  font-weight: bold;
+  font-family: serif;
+}
+
+/* 文字の設定（フォント・大きさ・色・太字） */
+.text-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.text-tools[disabled] {
+  opacity: 0.4;  /* テキストを選んでいないときは薄くする */
+}
+
+.text-tools select,
+.text-tools input[type="number"] {
+  height: 30px;
+  font-size: 14px;
+}
+
+.text-tools input[type="number"] {
+  width: 56px;
+}
+
+.text-tools input[type="color"] {
+  width: 32px;
+  height: 30px;
+  padding: 2px;
+}
+
+/* キャンバスの上に、文字を打ち込む欄を重ねて出すための設定 */
+#stage {
+  position: relative;
+}
+
+/* 文字を編集している間だけ出る入力欄 */
+.text-editor {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 1px dashed #7a9cff;
+  outline: none;
+  background: transparent;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  transform-origin: left top;
+}
