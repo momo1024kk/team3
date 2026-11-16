@@ -177,8 +177,12 @@ body {
 }
 
 .toolbar .hint {
+  /* 残りの幅に収まるだけ表示して、入りきらない分は「…」にする。
+     （flex: 1 1 0 … 説明文のせいでツールバーが2段にならないよう、幅は「余った分」だけ使う） */
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

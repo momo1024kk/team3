@@ -135,12 +135,17 @@ async function detectPoints(blob, fileName) {
 // 形がおかしいまま使うと、印を描くところやスナップで止まってしまうので、先に確かめる
 function isValidResult(result) {
   const isNumber = (n) => typeof n === "number" && Number.isFinite(n);
-  if (!result || !isNumber(result.width) || !isNumber(result.height)) return false;
-  if (result.width <= 0 || result.height <= 0) return false;
-  if (!result.points || typeof result.points !== "object") return false;
-  return Object.values(result.points).every((list) =>
+  const isSize = (n) => Number.isInteger(n) && n > 0;  // 画像の大きさは 1 以上の整数
+  const isPointList = (list) =>
     Array.isArray(list) &&
-    list.every((p) => Array.isArray(p) && p.length === 2 && isNumber(p[0]) && isNumber(p[1])));
+    list.every((p) => Array.isArray(p) && p.length === 2 && isNumber(p[0]) && isNumber(p[1]));
+
+  if (!result || !isSize(result.width) || !isSize(result.height)) return false;
+  if (!result.points || typeof result.points !== "object") return false;
+  // 班で決めた6種類（STYLES に並んでいるラベル）は、点がなくても必ず配列で入っている約束
+  if (!Object.keys(STYLES).every((label) => isPointList(result.points[label]))) return false;
+  // それ以外の種類が増えていても、形が正しければ使う
+  return Object.values(result.points).every(isPointList);
 }
 
 // ---- 画像を読み込む ----
@@ -219,10 +224,9 @@ async function addShape(name, x, y) {
 
   // name の "item" は「スライドに置いた部品」の目印（図形もテキストも付ける）
   const group = new Konva.Group({ x: x, y: y, draggable: true, name: "item " + name });
-  // 表示する画像は、追加した画像と同じ方法で作る（imageForDisplay の説明を参照）。
-  // 白い背景は透明になり、図形の中の白や、透明な背景の PNG はそのまま表示される
+  // 用意してある図形は、背景を透明にして表示する（白い四角で下の図形が隠れないように）
   group.add(new Konva.Image({
-    image: imageForDisplay(img), width: SHAPE_SIZE, height: SHAPE_SIZE,
+    image: makeBackgroundTransparent(img), width: SHAPE_SIZE, height: SHAPE_SIZE,
   }));
   group.add(makeMarkers(result));
 
@@ -235,6 +239,7 @@ async function addShape(name, x, y) {
   group.on("transform", () => keepMarkerSize(group));
 
   layer.add(group);
+  transformer.moveToTop();  // 選んでいる図形の上に重ねて置いても、拡大・縮小のつまみが隠れないようにする
   return group;
 }
 
@@ -296,8 +301,7 @@ function addText(x, y) {
 let stopEditing = null;
 
 function startEditing(text) {
-  transformer.nodes([]);
-  updateTextTools();
+  setSelection([]);
   text.hide();  // 編集中は、下のテキストを隠して入力欄だけ見せる
 
   const area = document.createElement("textarea");
@@ -426,6 +430,38 @@ fontSizeInput.addEventListener("input", () => {
 // 画像
 // ==============================
 
+// ---- 「背景を透明に」のチェック ----
+// 追加した画像を選んでいるときだけ使える。チェックを入れると背景を透明にし、外すと元の画像に戻す
+const imageTools = document.getElementById("image-tools");
+const transparentBackgroundInput = document.getElementById("transparent-background");
+
+// 追加した画像の元の画像。「背景を透明に」を外したときに戻すため、画像の部品（Konva.Image）ごとに覚えておく
+const originalImages = new WeakMap();
+
+// 今選んでいる、追加した画像の部品（Konva.Image）。追加した画像を選んでいないときは null。
+// 図形として置いた画像はグループ（画像＋特徴点の印）なので、その中の画像を返す
+function selectedPicture() {
+  const node = transformer.nodes()[0];
+  if (!node || !node.hasName("image")) return null;
+  return node instanceof Konva.Group ? node.findOne("Image") : node;
+}
+
+// チェックの表示を、選んでいる画像に合わせる
+function updateImageTools() {
+  const picture = selectedPicture();
+  imageTools.disabled = !picture;
+  transparentBackgroundInput.checked = !!picture && picture.getAttr("transparentBackground") === true;
+}
+
+transparentBackgroundInput.addEventListener("change", () => {
+  const picture = selectedPicture();
+  if (!picture) return;
+  const original = originalImages.get(picture);
+  const transparent = transparentBackgroundInput.checked;
+  picture.image(transparent ? makeBackgroundTransparent(original) : original);
+  picture.setAttr("transparentBackground", transparent);  // 選び直したときに、チェックの状態を戻せるように
+});
+
 // 置くときの最大の大きさ（スライドの座標）。大きい画像は、この中に収まるように縮めて置く
 const IMAGE_MAX_SIZE = 400;
 // API に送るときの最大の大きさ（ピクセル）。大きすぎる写真をそのまま送ると時間がかかるので縮める
@@ -472,16 +508,16 @@ function drawOnWhite(img, maxSize) {
   return canvas;
 }
 
-// ---- 画面に表示する画像を作る ----
-// 用意してある図形も、追加した画像も、すべてこの関数で表示用の画像を作る。
-// （追加した画像を API に送るときは「白い背景の上に描いた画像」を使うが、表示には元の画像を使う）
-//   ・透明な部分がある画像（背景が透明な PNG など）：元の画像をそのまま使う。
-//     白い部分も、半透明な部分も、元の見た目のまま
-//   ・透明な部分がない画像（白い背景の JPEG など）：まわりの白い背景だけを透明にする。
-//     そのまま置くと白い四角で下の図形が隠れてしまうため。
-//     図形の中の白い部分（白く塗った模様など）は透明にしない
-// 大きな写真をそのまま調べると時間がかかるので、API に送るときと同じ大きさ（DETECT_MAX_SIZE）まで縮めて扱う
-function imageForDisplay(img) {
+// ---- 背景を透明にした画像を作る ----
+// 用意してある図形は、いつもこの関数で背景を透明にして表示する（白い四角で下の図形が隠れないように）。
+// 追加した画像は、最初は追加したままの見た目で表示し、使う人が「背景を透明に」を選んだときだけこの関数を使う。
+// （写真などは、背景が勝手に消えると困るため）
+//
+// やり方：画像の端（四辺）で一番多い色を「背景の色」とみなし、
+// 端からつながっている、その色に近いピクセルだけを透明にする。
+// 背景が白い画像なら白、黒い画像なら黒が消える。図形に囲まれた内側には届かないので、図形の中の同じ色は残る。
+// 大きな画像をそのまま調べると時間がかかるので、API に送るときと同じ大きさ（DETECT_MAX_SIZE）まで縮めて扱う
+function makeBackgroundTransparent(img) {
   const fit = Math.min(1, DETECT_MAX_SIZE / Math.max(img.width, img.height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(img.width * fit));
@@ -490,25 +526,51 @@ function imageForDisplay(img) {
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);  // 白は敷かない（透明な部分は透明のまま）
   const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-  if (hasTransparency(data)) return img;  // 元の画像をそのまま表示する
-  makeOuterWhiteTransparent(data);
-  ctx.putImageData(data, 0, 0);
+  const background = backgroundColor(data);
+  if (background) {
+    removeBackground(data, background);
+    ctx.putImageData(data, 0, 0);
+  }
   return canvas;
 }
 
-// 画像の中に、透明・半透明なピクセルが1つでもあるか調べる
-function hasTransparency(data) {
+// 背景の色とみなすときの、色の差の許容範囲（R・G・B それぞれ 0〜255 のうち、これ未満の差なら同じ色とみなす）
+const BACKGROUND_TOLERANCE = 15;
+
+// 画像の端（四辺）のピクセルで一番多い色を [R, G, B] で返す。端がすべて透明なら null（消す背景がない）
+function backgroundColor(data) {
+  const { width, height } = data;
   const px = data.data;  // [R, G, B, 透明度, R, G, B, 透明度, ...] と並んでいる
-  for (let i = 3; i < px.length; i += 4) {
-    if (px[i] < 255) return true;  // 4つ目の値が透明度（255 = 不透明）
+  const edge = [];
+  for (let x = 0; x < width; x++) edge.push(x, (height - 1) * width + x);
+  for (let y = 0; y < height; y++) edge.push(y * width, y * width + width - 1);
+
+  // 1. 色を大まかに分けて（R・G・B をそれぞれ 16 段階）、一番多いグループを探す。
+  //    JPEG などは同じ背景でも色が少しずつばらつくので、まずは大まかに数える
+  const groups = new Map();
+  for (const n of edge) {
+    const i = n * 4;
+    if (px[i + 3] === 0) continue;  // 透明なピクセルは数えない
+    const key = (px[i] >> 4) * 256 + (px[i + 1] >> 4) * 16 + (px[i + 2] >> 4);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(i);
   }
-  return false;
+  if (groups.size === 0) return null;
+  const biggest = [...groups.values()].reduce((a, b) => (b.length > a.length ? b : a));
+
+  // 2. そのグループの中で、一番多いぴったりの色を背景の色にする
+  const counts = new Map();
+  for (const i of biggest) {
+    const key = px[i] * 65536 + px[i + 1] * 256 + px[i + 2];
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const best = [...counts.entries()].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+  return [best >> 16, (best >> 8) & 255, best & 255];
 }
 
-// 画像の端からつながっている白いピクセルだけを透明にする（data を直接書きかえる）。
-// 端の白いピクセルから始めて、となり（上下左右）の白いピクセルへと順に広げていく（塗りつぶしと同じ考え方）。
-// 図形に囲まれた内側の白には届かないので、図形の中の白は残る
-function makeOuterWhiteTransparent(data) {
+// 画像の端からつながっている、背景の色に近いピクセルだけを透明にする（data を直接書きかえる）。
+// 端のピクセルから始めて、となり（上下左右）へと順に広げていく（ペイントの「塗りつぶし」と同じ考え方）
+function removeBackground(data, [r, g, b]) {
   const { width, height } = data;
   const px = data.data;
 
@@ -516,11 +578,14 @@ function makeOuterWhiteTransparent(data) {
   // 1つのピクセルは1回しか積まないので、ピクセルの数だけ場所があれば足りる
   const stack = new Int32Array(width * height);
   let count = 0;
-  // 白に近くて、まだ透明にしていないピクセルなら、透明にしてから山に積む
+  // 背景の色に近くて、まだ透明にしていないピクセルなら、透明にしてから山に積む
   // （先に透明にしておくのは、同じピクセルを2回積まないための「調べ済み」の印）
   const visit = (n) => {
     const i = n * 4;
-    if (px[i + 3] !== 0 && px[i] > 240 && px[i + 1] > 240 && px[i + 2] > 240) {
+    if (px[i + 3] !== 0 &&
+        Math.abs(px[i] - r) < BACKGROUND_TOLERANCE &&
+        Math.abs(px[i + 1] - g) < BACKGROUND_TOLERANCE &&
+        Math.abs(px[i + 2] - b) < BACKGROUND_TOLERANCE) {
       px[i + 3] = 0;
       stack[count++] = n;
     }
@@ -534,9 +599,9 @@ function makeOuterWhiteTransparent(data) {
   while (count > 0) {
     const n = stack[--count];
     const x = n % width;
-    if (x > 0) visit(n - 1);                    // 左
-    if (x < width - 1) visit(n + 1);            // 右
-    if (n >= width) visit(n - width);           // 上
+    if (x > 0) visit(n - 1);                         // 左
+    if (x < width - 1) visit(n + 1);                 // 右
+    if (n >= width) visit(n - width);                // 上
     if (n < (height - 1) * width) visit(n + width);  // 下
   }
 }
@@ -584,7 +649,8 @@ function looksLikeShape(img) {
 
 // ---- 画像を1つキャンバスに置く ----
 // center: 置く場所の真ん中（スライドの座標）。省略するとスライドの真ん中
-async function addImageFile(file, center) {
+// ticket: 「選択の整理券」（newSelectionTicket() を参照）。何枚かまとめて追加するときは、同じ整理券を渡す
+async function addImageFile(file, center, ticket = newSelectionTicket()) {
   if (!file.type.startsWith("image/")) {
     notify("画像ファイル（PNG・JPEG など）を選んでください");
     return;
@@ -607,10 +673,6 @@ async function addImageFile(file, center) {
   }
   const x = center.x - width / 2;
   const y = center.y - height / 2;
-
-  // API の返事を待っている間に、使う人が別の図形を選ぶことがある。
-  // そのときは、あとで追加した画像に選択を移さないように、今の選択を覚えておく
-  const selectionBefore = transformer.nodes().slice();
 
   // 図形らしい画像なら、API で特徴点を調べる
   let result = null;
@@ -636,24 +698,29 @@ async function addImageFile(file, center) {
     }
   }
 
-  let node;
+  // 表示には、追加したままの元の画像を使う（白い背景をつけた画像は、API に送るためだけに使う）。
+  // 背景を透明にしたいときは、使う人がツールバーの「背景を透明に」を選ぶ
+  let node, picture;
   if (result) {
     // 図形：用意してある図形と同じく、画像と特徴点の印を1つのグループにする
     node = new Konva.Group({ x: x, y: y, draggable: true, name: "item image" });
-    // 表示には元の画像を使う（白い背景をつけた画像は、API に送るためだけに使う）
-    node.add(new Konva.Image({ image: imageForDisplay(img), width: width, height: height }));
+    picture = new Konva.Image({ image: img, width: width, height: height });
+    node.add(picture);
     node.add(makeMarkers(result));
     node.setAttr("points", result);
     node.on("transform", () => keepMarkerSize(node));
   } else {
     // 写真：画像をそのまま置く。スナップは外枠の 9 点（テキストと同じ）
     node = new Konva.Image({ x: x, y: y, image: img, width: width, height: height, draggable: true, name: "item image" });
+    picture = node;
   }
+  originalImages.set(picture, img);  // 「背景を透明に」を外したときに戻せるよう、元の画像を覚えておく
   makeMovable(node);
   layer.add(node);
-  // 待っている間に選択が変わっていなければ、追加した画像を選ぶ。
-  // 変わっていたら、使う人が選んだものをそのままにする（Delete キーで違うものが消えないように）
-  if (sameSelection(transformer.nodes(), selectionBefore)) select(node);
+  transformer.moveToTop();  // 選んでいる図形の上に重ねて置いても、拡大・縮小のつまみが隠れないようにする
+  // 追加を始めてから、使う人が選択を一度も変えていなければ、追加した画像を選ぶ。
+  // 変えていたら、使う人が最後に選んだものをそのままにする（Delete キーで違うものが消えないように）
+  selectIfUntouched(node, ticket);
   notify(message);
 }
 
@@ -661,7 +728,9 @@ async function addImageFile(file, center) {
 const imageFileInput = document.getElementById("image-file");
 document.getElementById("add-image").addEventListener("click", () => imageFileInput.click());
 imageFileInput.addEventListener("change", async () => {
-  for (const file of imageFileInput.files) await addImageFile(file);
+  // 何枚か選んだときは、全部で1枚の整理券を使う（途中で選択を変えたら、残りの画像にも選択を移さない）
+  const ticket = newSelectionTicket();
+  for (const file of imageFileInput.files) await addImageFile(file, undefined, ticket);
   imageFileInput.value = "";  // 同じファイルをもう一度選んでも反応するように、選択を空にする
 });
 
@@ -677,8 +746,10 @@ container.addEventListener("drop", async (e) => {
   // 落とした場所を、スライドの座標に直す
   stage.setPointersPositions(e);
   const point = layer.getRelativePointerPosition();
+  // 何枚か落としたときは、全部で1枚の整理券を使う（途中で選択を変えたら、残りの画像にも選択を移さない）
+  const ticket = newSelectionTicket();
   for (const file of e.dataTransfer.files) {
-    await addImageFile(file, { ...point });
+    await addImageFile(file, { ...point }, ticket);
     point.x += 20;  // 何枚か一度に落としたときは、少しずつずらす
     point.y += 20;
   }
@@ -702,9 +773,9 @@ for (const name of SHAPES) {
     const x = slide.x() + slide.width() / 2 - SHAPE_SIZE / 2 + shift;
     const y = slide.y() + slide.height() / 2 - SHAPE_SIZE / 2 + shift;
     // 1回目は API の返事を待つので、その間に選択が変わったら、追加した図形には移さない
-    const selectionBefore = transformer.nodes().slice();
+    const ticket = newSelectionTicket();
     const group = await addShape(name, x, y);
-    if (sameSelection(transformer.nodes(), selectionBefore)) select(group);  // 追加した図形を選んだ状態にする
+    selectIfUntouched(group, ticket);  // 選択を変えていなければ、追加した図形を選んだ状態にする
   });
   buttonBox.appendChild(button);
 }
@@ -738,15 +809,37 @@ const transformer = new Konva.Transformer({
 });
 layer.add(transformer);
 
-function select(node) {
-  transformer.nodes([node]);
+// 選択を変えた回数。選択はかならず setSelection() で変えるので、ここで数えられる
+let selectionVersion = 0;
+
+// 選択を変える。nodes は選ぶものの配列（空の配列なら、何も選ばない）
+function setSelection(nodes) {
+  transformer.nodes(nodes);
   transformer.moveToTop();
-  updateTextTools();  // テキストを選んだら、文字の設定欄を使えるようにする
+  selectionVersion++;
+  updateTextTools();   // テキストを選んだら、文字の設定欄を使えるようにする
+  updateImageTools();  // 追加した画像を選んだら、「背景を透明に」を使えるようにする
 }
 
-// 2つの選択（図形の並び）が同じかどうか
-function sameSelection(a, b) {
-  return a.length === b.length && a.every((node, i) => node === b[i]);
+function select(node) {
+  setSelection([node]);
+}
+
+// ---- 選択の整理券 ----
+// 図形や画像の追加は、API の返事などを待つので時間がかかる。その間に使う人が別のものを選ぶことがある。
+// 追加を始めるときに「整理券」（その時点の選択を変えた回数）を受け取っておき、
+// 追加が終わったときに回数が変わっていなければ（＝使う人が選択を一度も触っていなければ）、追加したものを選ぶ。
+// 「四角形 → 星 → 四角形」のように選び直して元に戻した場合も、回数は増えているので区別できる
+function newSelectionTicket() {
+  return { version: selectionVersion };
+}
+
+function selectIfUntouched(node, ticket) {
+  if (ticket.version !== selectionVersion) return;  // 使う人が選択を変えたので、そのままにする
+  select(node);
+  // 何枚かまとめて追加するときは、同じ整理券を使い回す。
+  // 今の選択はこのプログラムが変えたものなので、回数を合わせておく（次の画像も選べるように）
+  ticket.version = selectionVersion;
 }
 
 // 何もないところをクリックしたら、選択を外す
@@ -754,8 +847,7 @@ stage.on("mousedown touchstart", (e) => {
   if (e.target === stage) {
     // 文字の編集中なら、打った内容を残して終わらせる。何もないところを押したので、何も選ばない
     if (stopEditing) stopEditing(true, false);
-    transformer.nodes([]);
-    updateTextTools();
+    setSelection([]);
   }
 });
 
@@ -764,9 +856,9 @@ window.addEventListener("keydown", (e) => {
   if (e.key !== "Delete" && e.key !== "Backspace") return;
   // 入力欄（文字の編集・大きさの数字など）で文字を消しているときは、図形を消さない
   if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+  if (transformer.nodes().length === 0) return;  // 何も選んでいなければ、何もしない
   for (const node of transformer.nodes()) node.destroy();
-  transformer.nodes([]);
-  updateTextTools();
+  setSelection([]);
 });
 
 // 図形を拡大・縮小すると、中の印や文字まで一緒に大きくなってしまう。
