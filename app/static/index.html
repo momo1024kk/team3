@@ -15,6 +15,15 @@
     <!-- テキストを追加するボタン -->
     <div class="shape-buttons">
       <button id="add-text" class="text-button" title="テキストを追加">T</button>
+      <!-- 画像を追加するボタン（額縁と山の絵）。押すとファイルを選ぶ画面が出る -->
+      <button id="add-image" title="画像を追加（スライドにドラッグ＆ドロップでも追加できます）">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+          <circle cx="9" cy="10" r="2"></circle>
+          <path d="M3 18l6-6 4 4 3-3 5 5"></path>
+        </svg>
+      </button>
+      <input id="image-file" type="file" accept="image/*" hidden>
     </div>
     <!-- 文字の設定。テキストを選んでいるときだけ使える（それ以外は灰色になる） -->
     <fieldset id="text-tools" class="text-tools" disabled>
@@ -30,6 +39,13 @@
         <b>B</b>
       </label>
     </fieldset>
+    <!-- 追加した画像の背景を透明にするかどうか。追加した画像を選んでいるときだけ使える（それ以外は灰色になる） -->
+    <fieldset id="image-tools" class="text-tools" disabled>
+      <label class="toggle" title="画像のまわりの背景（端と同じ色の部分）を透明にします。外すと元に戻ります">
+        <input id="transparent-background" type="checkbox">
+        背景を透明に
+      </label>
+    </fieldset>
     <!-- 特徴点の印を表示するかどうか -->
     <label class="toggle">
       <input type="checkbox" id="show-markers" checked>
@@ -40,6 +56,9 @@
 
   <!-- キャンバス（図形を置く作業スペース）。Konva がこの中に描画する -->
   <div id="stage"></div>
+
+  <!-- 画像を読み込んだときなどのお知らせ。画面の下に浮かせて、app.js が数秒だけ表示する -->
+  <div id="status" class="status"></div>
 
   <!-- Konva.js：キャンバス上で図形を置いたりドラッグしたりするための道具 -->
   <script src="https://unpkg.com/konva@9.3.6/konva.min.js"></script>

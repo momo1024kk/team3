@@ -142,3 +142,71 @@ body {
   white-space: pre;
   transform-origin: left top;
 }
+
+/* 画像を追加するボタンの絵 */
+.shape-buttons #add-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #333;
+}
+
+/* お知らせ（画像を読み込んだときなど）。画面の下の真ん中に浮かせて出す */
+.status {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 6px;
+  background: rgba(30, 30, 30, 0.85);
+  color: #ffffff;
+  font-size: 14px;
+  pointer-events: none;  /* お知らせの上からでも、下の図形をつかめるようにする */
+}
+
+.status:empty {
+  display: none;  /* 何も書いていないときは隠す */
+}
+
+/* ツールバーの文字が2行に折り返さないようにする。
+   画面が狭いときは、右端の説明文だけを「…」で省略する */
+.toolbar h1,
+.toolbar .toggle {
+  white-space: nowrap;
+}
+
+.toolbar .hint {
+  /* 残りの幅に収まるだけ表示して、入りきらない分は「…」にする。
+     （flex: 1 1 0 … 説明文のせいでツールバーが2段にならないよう、幅は「余った分」だけ使う） */
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 画面が狭いときは、ボタンや設定欄が画面の外に隠れないように、ツールバーを2段以上に折り返す。
+   バーが高くなった分、下のキャンバスが縮む（app.js がウィンドウの大きさに合わせてスライドを縮める） */
+.toolbar {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 48px;
+  padding: 6px 16px;
+  row-gap: 6px;
+  box-sizing: border-box;
+}
+
+/* もっと狭いときは、操作の説明文を隠して、ボタンの場所を空ける */
+@media (max-width: 900px) {
+  .toolbar .hint {
+    display: none;
+  }
+}
+
+/* 画像をドラッグしてスライドの上に持ってきている間、枠の色を変えて「ここに落とせる」と分かるようにする */
+#stage.drop-target {
+  outline: 3px dashed #7a9cff;
+  outline-offset: -6px;
+}
