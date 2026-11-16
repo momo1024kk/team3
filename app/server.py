@@ -8,13 +8,14 @@ from shutil import copyfileobj
 from tempfile import TemporaryDirectory
 
 import cv2
+import numpy as np
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from features import concavity, edges_vertices, extremes
-from features.preprocess import find_shapes, load_binary
+from features.preprocess import find_contours_with_hierarchy, find_shapes, load_binary
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = ROOT / "app" / "static"
@@ -33,10 +34,96 @@ class FeaturePoints(BaseModel):
     concavity: list[tuple[int, int]] = Field(default_factory=list)
 
 
+class ContourResult(BaseModel):
+    """1つの輪郭と、その輪郭上で検出した特徴点。"""
+
+    id: int
+    parent_id: int | None
+    depth: int
+    is_hole: bool
+    points: FeaturePoints
+    edges: list[tuple[tuple[int, int], tuple[int, int]]]
+    arc_midpoints: list[tuple[int, int]]
+
+
 class DetectionResult(BaseModel):
     width: int
     height: int
     points: FeaturePoints
+    contours: list[ContourResult] | None = None
+
+
+def _matches_boundary(a, b):
+    """取得モードで点列の開始位置が変わっても、同じ外縁なら一致とみなす。"""
+    if cv2.boundingRect(a) != cv2.boundingRect(b):
+        return False
+    if cv2.contourArea(a) != cv2.contourArea(b):
+        return False
+    if np.array_equal(a, b):
+        return True
+    return {tuple(xy) for xy in a.reshape(-1, 2)} == {
+        tuple(xy) for xy in b.reshape(-1, 2)
+    }
+
+
+def _contours_for_shape(binary, primary, primary_points, primary_analysis):
+    """従来選択した最大外縁に対応する輪郭と、その子孫だけを返す。"""
+    items = find_contours_with_hierarchy(binary, min_area=0)
+    root = next(
+        (item for item in items if item["parent_index"] is None
+         and _matches_boundary(item["contour"], primary)),
+        None,
+    )
+    if root is None:
+        # 別の外縁を誤って最大図形に紐付けない。
+        raise HTTPException(status_code=500, detail="外側輪郭と階層の対応付けに失敗しました。")
+
+    children = {}
+    for item in items:
+        children.setdefault(item["parent_index"], []).append(item["index"])
+    selected = set()
+    pending = [root["index"]]
+    while pending:
+        index = pending.pop()
+        selected.add(index)
+        pending.extend(children.get(index, ()))
+
+    result = []
+    for item in items:
+        if item["index"] not in selected:
+            continue
+        if item["index"] == root["index"]:
+            analysis = primary_analysis
+            contour_points = primary_points.copy()
+        else:
+            contour = item["contour"]
+            analysis = edges_vertices.analyze_contour(contour)
+            contour_points = {label: [] for label in LABELS}
+            for label, coordinates in extremes.detect(contour).items():
+                contour_points[label] = [(int(x), int(y)) for x, y in coordinates]
+            contour_points["vertex"] = [
+                (int(x), int(y)) for x, y in analysis["vertices"]
+            ]
+            # 穴のくぼみは未評価。外縁・穴内の図形に限って既存処理を使う。
+            if not item["is_hole"]:
+                contour_points["concavity"] = [
+                    (int(x), int(y)) for x, y in concavity.detect(contour)["concavity"]
+                ]
+        result.append({
+            "id": item["index"],
+            "parent_id": item["parent_index"],
+            "depth": item["depth"],
+            "is_hole": item["is_hole"],
+            "points": contour_points,
+            "edges": [
+                ((int(x1), int(y1)), (int(x2), int(y2)))
+                for (x1, y1), (x2, y2) in analysis["edges"]
+            ],
+            "arc_midpoints": [
+                (int(x), int(y)) for x, y in analysis["arc_midpoints"]
+            ],
+        })
+    return result
 
 
 app = FastAPI(title="team3 特徴点検出 API")
@@ -78,9 +165,12 @@ def index():
     )
 
 
-@app.post("/api/detect", response_model=DetectionResult)
-def detect_image(file: UploadFile = File(..., description="図形が1つ写った画像")):
-    """画像1枚から、元画像の大きさと6種類の特徴点を返す。"""
+@app.post("/api/detect", response_model=DetectionResult, response_model_exclude_unset=True)
+def detect_image(
+    file: UploadFile = File(..., description="図形が1つ写った画像"),
+    include_contours: bool = False,
+):
+    """画像1枚から特徴点を返す。指定時のみ最大図形の輪郭階層も返す。"""
     # 共通の load_binary() はファイルのパスを受け取るため、
     # 送られた画像を一時ファイルにする。処理後は自動で削除される。
     with TemporaryDirectory(prefix="team3_api_") as folder:
@@ -99,17 +189,34 @@ def detect_image(file: UploadFile = File(..., description="図形が1つ写っ�
     height, width = img.shape[:2]
     points = {label: [] for label in LABELS}
     contours = find_shapes(binary)
+    primary = None
+    primary_analysis = None
 
     if contours:
         # 中間発表までは図形1つが対象。複数ある場合は最大の図形を使う。
-        contour = max(contours, key=cv2.contourArea)
-        for detector in (extremes, edges_vertices, concavity):
-            for label, coordinates in detector.detect(contour).items():
+        primary = max(contours, key=cv2.contourArea)
+        if include_contours:
+            primary_analysis = edges_vertices.analyze_contour(primary)
+            detectors = (extremes, concavity)
+        else:
+            detectors = (extremes, edges_vertices, concavity)
+        for detector in detectors:
+            for label, coordinates in detector.detect(primary).items():
                 if label in points:
                     # NumPy の整数も、JSON で扱える Python の整数にそろえる。
                     points[label] = [(int(x), int(y)) for x, y in coordinates]
+        if include_contours:
+            points["vertex"] = [
+                (int(x), int(y)) for x, y in primary_analysis["vertices"]
+            ]
 
-    return {"width": int(width), "height": int(height), "points": points}
+    result = {"width": int(width), "height": int(height), "points": points}
+    if include_contours:
+        result["contours"] = (
+            _contours_for_shape(binary, primary, points, primary_analysis)
+            if primary is not None else []
+        )
+    return result
 
 
 # index.html は app.js・style.css などを相対パスで読むため、
