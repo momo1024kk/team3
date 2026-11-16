@@ -183,6 +183,24 @@ body {
   white-space: nowrap;
 }
 
+/* 画面が狭いときは、ボタンや設定欄が画面の外に隠れないように、ツールバーを2段以上に折り返す。
+   バーが高くなった分、下のキャンバスが縮む（app.js がウィンドウの大きさに合わせてスライドを縮める） */
+.toolbar {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 48px;
+  padding: 6px 16px;
+  row-gap: 6px;
+  box-sizing: border-box;
+}
+
+/* もっと狭いときは、操作の説明文を隠して、ボタンの場所を空ける */
+@media (max-width: 900px) {
+  .toolbar .hint {
+    display: none;
+  }
+}
+
 /* 画像をドラッグしてスライドの上に持ってきている間、枠の色を変えて「ここに落とせる」と分かるようにする */
 #stage.drop-target {
   outline: 3px dashed #7a9cff;
